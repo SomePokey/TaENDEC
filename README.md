@@ -1,7 +1,5 @@
 # TaENDEC (Totally An ENDEC) 📻
 
-## ⚠️ This release of TaENDEC is not complete due to current limitations. More to come soon.
-
 **Version:** 6.3.4 (Discord Webhook Hotfix)  
 **Platform:** Debian / Ubuntu Linux  
 
