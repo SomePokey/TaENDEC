@@ -52,7 +52,8 @@ Run the installer:
 
 Follow the prompt: The script will ask you for a username to install under (defaults to endec). It will automatically create this user, assign the correct audio/video groups, and dynamically configure the daemon for that user.
 
-⚙️ Configuration
+## ⚙️ Configuration
+
 The main configuration file is stored in the home directory of the user you selected during installation (e.g., /home/endec/taendec_config.json).
 
 If the file does not exist, the installer generates a default one. You can edit this file directly or use the TaENDEC API to push updates.
@@ -67,7 +68,8 @@ details_channel: Configure the mpv output mode (static_screen, media_stream, you
 
 Note: Restart the service after making manual changes to the JSON file.
 
-📡 API Endpoints
+## 📡 API Endpoints
+
 TaENDEC runs a local HTTP API on Port 8085. Basic Auth is supported if enabled in the config.
 
 GET /status - Returns current ENDEC state, queue depth, and stream monitoring status.
@@ -82,7 +84,8 @@ GET /api/config - Fetches the active configuration JSON.
 
 POST /api/config - Updates the configuration JSON.
 
-🔧 Service Management
+## 🔧 Service Management
+
 TaENDEC runs as a systemd background service. You can manage it using standard systemctl commands:
 
 Check Status:
@@ -94,7 +97,7 @@ sudo systemctl restart taendec
 View Live Logs:
 sudo journalctl -u taendec -f
 
-File Locations
+## File Locations
 
 Daemon Script: /home/<user>/endec_system.py
 
