@@ -1,5 +1,7 @@
 # TaENDEC (Totally An ENDEC) 📻
 
+## ⚠️ This release of TaENDEC is not complete due to current limitations. More to come soon.
+
 **Version:** 6.3.4 (Discord Webhook Hotfix)  
 **Platform:** Debian / Ubuntu Linux  
 
@@ -30,7 +32,7 @@ TaENDEC is designed exclusively for Debian and Ubuntu-based environments. The in
 
 ## 📁 Required Data Files
 
-* **`FIPS Codes.csv`**: You must provide this file in the application directory. TaENDEC references `FIPS Codes.csv` to translate standard FIPS location codes into human-readable county and state names. If this file is missing or not formatted correctly, your incoming alerts, webhook payloads, and logs will just show the raw six-digit county codes for all counties instead of the geographic names.
+* **`FIPS Codes.csv`**: You must provide this file in the application directory. TaENDEC references `FIPS Codes.csv` to translate standard FIPS location codes into human-readable county and state names. If this file is missing or not formatted correctly, your incoming alerts, webhook payloads, and logs will just show raw county codes for all counties instead of the geographic names.
 
 ---
 
@@ -41,30 +43,30 @@ TaENDEC includes an automated installation script that sets up dependencies, con
 1. Clone or download the repository to your Debian/Ubuntu machine.
 2. Ensure `FIPS Codes.csv` is included in the directory.
 3. Make the installer executable:
-   chmod +x install.sh
+   `chmod +x install.sh`
 
 1. Clone or download the repository to your Debian/Ubuntu machine.
 2. Make the installer executable:
-   chmod +x install.sh
+   `chmod +x install.sh`
 
 Run the installer:
-./install.sh
+`./install.sh`
 
 Follow the prompt: The script will ask you for a username to install under (defaults to endec). It will automatically create this user, assign the correct audio/video groups, and dynamically configure the daemon for that user.
 
 ## ⚙️ Configuration
 
-The main configuration file is stored in the home directory of the user you selected during installation (e.g., /home/endec/taendec_config.json).
+The main configuration file is stored in the home directory of the user you selected during installation (e.g., `/home/endec/taendec_config.json`).
 
 If the file does not exist, the installer generates a default one. You can edit this file directly or use the TaENDEC API to push updates.
 
 Key Configuration Sections:
 
-outputs: Enable/disable HTTP POSTs, Discord webhooks, and set your multicast addresses.
+`outputs`: Enable/disable HTTP POSTs, Discord webhooks, and set your multicast addresses.
 
-monitors: Define the audio streams you want to monitor (e.g., "Local_Radio": "http://stream.url/audio" or "Scanner": "ALSA").
+`monitors`: Define the audio streams you want to monitor (e.g., `"Local_Radio": "http://stream.url/audio"` or `"Scanner": "ALSA"`).
 
-details_channel: Configure the mpv output mode (static_screen, media_stream, youtube, or off).
+`details_channel`: Configure the mpv output mode (`static_screen`, `media_stream`, `youtube`, or `off`).
 
 Note: Restart the service after making manual changes to the JSON file.
 
@@ -72,39 +74,39 @@ Note: Restart the service after making manual changes to the JSON file.
 
 TaENDEC runs a local HTTP API on Port 8085. Basic Auth is supported if enabled in the config.
 
-GET /status - Returns current ENDEC state, queue depth, and stream monitoring status.
+`GET /status` - Returns current ENDEC state, queue depth, and stream monitoring status.
 
-GET /api/history - Returns a JSON array of past alerts.
+`GET /api/history` - Returns a JSON array of past alerts.
 
-POST /api/transmit - Immediately generates and transmits an alert based on JSON payload.
+`POST /api/transmit` - Immediately generates and transmits an alert based on JSON payload.
 
-POST /api/schedule - Schedules an alert for a future time.
+`POST /api/schedule` - Schedules an alert for a future time.
 
-GET /api/config - Fetches the active configuration JSON.
+`GET /api/config` - Fetches the active configuration JSON.
 
-POST /api/config - Updates the configuration JSON.
+`POST /api/config` - Updates the configuration JSON.
 
 ## 🔧 Service Management
 
 TaENDEC runs as a systemd background service. You can manage it using standard systemctl commands:
 
 Check Status:
-sudo systemctl status taendec
+`sudo systemctl status taendec`
 
 Restart the Daemon:
-sudo systemctl restart taendec
+`sudo systemctl restart taendec`
 
 View Live Logs:
-sudo journalctl -u taendec -f
+`sudo journalctl -u taendec -f`
 
 ## File Locations
 
-Daemon Script: /home/<user>/endec_system.py
+Daemon Script: `/home/<user>/endec_system.py`
 
-Configuration: /home/<user>/taendec_config.json
+Configuration: `/home/<user>/taendec_config.json`
 
-FIPS Reference: /home/<user>/FIPS Codes.csv
+FIPS Reference: `/home/<user>/FIPS Codes.csv`
 
-Logs: /home/<user>/logs/alert_history.log
+Logs: `/home/<user>/logs/alert_history.log`
 
-Audio Archive: /var/lib/eas_alerts/audio_archive/
+Audio Archive: `/var/lib/eas_alerts/audio_archive/`
