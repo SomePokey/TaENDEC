@@ -19,25 +19,27 @@ if ! command -v sudo >/dev/null 2>&1; then
 fi
 
 # Check for valid sudoers permissions
-# sudo -v updates the user's cached credentials. If it fails, they lack permissions.
 if ! sudo -v >/dev/null 2>&1; then
     echo "Please make sure sudo permissions are correct. Run su -, enter the root password, then run usermod sudo -aG (your user) and log out completely."
     exit 1
 fi
 
-# Install required dependencies using apt (not apt-get)
+APP_USER="$USER"
+APP_DIR="/home/$APP_USER"
+
+# Install required dependencies using apt
 sudo apt update
 sudo apt install -y python3-requests python3-tzlocal ffmpeg espeak-ng alsa-utils multimon-ng mpv
 
 # Prepare target directories
-sudo mkdir -p /home/endec
+sudo mkdir -p "$APP_DIR"
 sudo mkdir -p /var/www/html
 sudo mkdir -p /var/lib/eas_alerts/audio_archive
 sudo mkdir -p /var/lib/eas_alerts/uploads
-sudo mkdir -p /home/endec/logs
+sudo mkdir -p "$APP_DIR/logs"
 
 # --- 1. Generate Configuration File ---
-cat << 'EOF' | sudo tee /home/endec/taendec_config.json > /dev/null
+cat << 'EOF' | sudo tee "$APP_DIR/taendec_config.json" > /dev/null
 {
   "security": {
     "require_auth": false,
@@ -107,7 +109,7 @@ cat << 'EOF' | sudo tee /home/endec/taendec_config.json > /dev/null
 }
 EOF
 
-# --- 2. Generate Web UI (gemini-code-1789859979067_5.sh) ---
+# --- 2. Generate Web UI ---
 cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
 <!DOCTYPE html>
 <html lang="en">
@@ -163,7 +165,6 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
     <button class="tab-btn" onclick="doLogout()" id="logoutBtn" style="display:none; float:right;">Logout</button>
   </div>
 
-  <!-- ENCODER PANEL -->
   <div id="tab-encoder">
     <form id="easForm" onsubmit="submitAlert(event)">
       <div class="form-group">
@@ -221,11 +222,9 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
     </form>
   </div>
 
-  <!-- SETTINGS PANEL -->
   <div id="tab-settings" class="hidden">
     <h3>TaENDEC Master Configuration</h3>
     <div class="settings-grid">
-      <!-- SECURITY PANEL -->
       <div class="settings-panel">
         <h4>Security & Authentication</h4>
         <label><input type="checkbox" id="cfg_auth_enable"> Require Web UI Login</label><br>
@@ -358,7 +357,6 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
     <button class="btn-orange" onclick="saveSettings()">Save Configuration</button>
   </div>
 
-  <!-- HISTORY PANEL -->
   <div id="tab-history" class="hidden">
     <h3>Archive</h3>
     <table><thead><tr><th>Timestamp</th><th>Header String</th><th>Mode</th><th>Playback</th></tr></thead><tbody id="historyTableBody"></tbody></table>
@@ -659,8 +657,8 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
 </html>
 EOF
 
-# --- 3. Generate TaENDEC Daemon (gemini-code-1789860935977_4.sh) ---
-cat << 'EOF' | sudo tee /home/endec/endec_system.py > /dev/null
+# --- 3. Generate TaENDEC Daemon ---
+cat << 'EOF' | sudo tee "$APP_DIR/endec_system.py" > /dev/null
 #!/usr/bin/env python3
 """
 TaENDEC Master Telemetry & Streaming Daemon (v6.3.4 - Discord Webhook Hotfix)
@@ -692,11 +690,11 @@ try:
 except ImportError:
     requests = None
 
-LOG_DIR = "/home/endec/logs"
+LOG_DIR = "/home/APP_USER_PLACEHOLDER/logs"
 PERSISTENT_AUDIO_DIR = "/var/lib/eas_alerts/audio_archive"
 UPLOAD_DIR = "/var/lib/eas_alerts/uploads"
-CONFIG_FILE = "/home/endec/taendec_config.json"
-CSV_FILE = "/home/endec/FIPS Codes.csv"
+CONFIG_FILE = "/home/APP_USER_PLACEHOLDER/taendec_config.json"
+CSV_FILE = "/home/APP_USER_PLACEHOLDER/FIPS Codes.csv"
 
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(PERSISTENT_AUDIO_DIR, exist_ok=True)
@@ -901,7 +899,6 @@ def dispatch_discord_webhook(raw_header, additional_text="", wav_path=None):
     if has_audio:
         embed_fields.insert(2, {"name": "📻 Audio Capture", "value": "Listen to the broadcast audio attached below.", "inline": True})
 
-    # FIX: Use 'or' to fallback to default if the config contains an empty string ""
     payload = {
         "username": outputs.get("discord_username") or "TaENDEC System",
         "embeds": [{
@@ -914,7 +911,6 @@ def dispatch_discord_webhook(raw_header, additional_text="", wav_path=None):
         }]
     }
 
-    # Only append avatar if it's not an empty string
     discord_avatar = outputs.get("discord_avatar_url")
     if discord_avatar:
         payload["avatar_url"] = discord_avatar
@@ -1255,7 +1251,6 @@ def alert_playback_worker():
                 card_paths = generate_alert_card(translated_text=full_translation, additional_text="")
                 if card_paths: launch_mpv_display(card_paths)
                 
-                # HTTP JSON and Multipart Discord Webhook Dispatch
                 threading.Thread(target=dispatch_alert_json, args=(raw_header, full_translation, True)).start()
                 threading.Thread(target=dispatch_discord_webhook, args=(raw_header, "", compiled_wav)).start()
                 
@@ -1291,7 +1286,6 @@ def alert_playback_worker():
                 card_paths = generate_alert_card(translated_text=full_translation, additional_text=add_text)
                 if card_paths: launch_mpv_display(card_paths)
                 
-                # HTTP JSON and Multipart Discord Webhook Dispatch
                 threading.Thread(target=dispatch_alert_json, args=(header_str, add_text, True)).start()
                 threading.Thread(target=dispatch_discord_webhook, args=(header_str, add_text, compiled_wav)).start()
 
@@ -1460,5 +1454,39 @@ class APIHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.verify_auth(): return
 EOF
+
+sudo sed -i "s|APP_USER_PLACEHOLDER|$APP_USER|g" "$APP_DIR/endec_system.py"
+sudo chmod +x "$APP_DIR/endec_system.py"
+
+# --- 4. Move FIPS CSV File ---
+if [ -f "/home/$APP_USER/TaENDEC/FIPS Codes.csv" ]; then
+    sudo mv "/home/$APP_USER/TaENDEC/FIPS Codes.csv" "/home/$APP_USER/" 2>/dev/null || true
+fi
+
+# --- 5. Generate and Enable systemd Service ---
+SERVICE_NAME="taendec.service"
+SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
+
+cat << EOF | sudo tee "$SERVICE_PATH" > /dev/null
+[Unit]
+Description=TaENDEC System - SAME Header Emergency Alert Decoder
+After=network.target sound.target
+
+[Service]
+Type=simple
+User=$APP_USER
+WorkingDirectory=$APP_DIR
+ExecStart=/usr/bin/python3 $APP_DIR/endec_system.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo chmod 644 "$SERVICE_PATH"
+sudo systemctl daemon-reload
+sudo systemctl enable --now "$SERVICE_NAME"
 
 sudo chmod +x /home/endec
