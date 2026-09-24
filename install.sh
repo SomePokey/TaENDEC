@@ -2,7 +2,7 @@
 
 # Prevent execution as root
 if [ "$EUID" -eq 0 ]; then
-    echo "Error: The script should not be run as sudo."
+    echo "Error: The script should not be run as sudo. Run as your standard user."
     exit 1
 fi
 
@@ -12,33 +12,28 @@ if ! command -v apt >/dev/null 2>&1; then
     exit 1
 fi
 
-# Check for sudo binary
-if ! command -v sudo >/dev/null 2>&1; then
-    echo "This script runs commands as root to install the necessary dependencies. Please log in as root and run apt install sudo. Then run usermod sudo -aG (your user) and log out completely"
-    exit 1
-fi
-
 # Check for valid sudoers permissions
 if ! sudo -v >/dev/null 2>&1; then
     echo "Please make sure sudo permissions are correct. Run su -, enter the root password, then run usermod sudo -aG (your user) and log out completely."
     exit 1
 fi
 
+# Dynamically set user and application directory
 APP_USER="$USER"
 APP_DIR="/home/$APP_USER"
 
-# Install required dependencies using apt
+echo "Installing dependencies..."
 sudo apt update
 sudo apt install -y python3-requests python3-tzlocal ffmpeg espeak-ng alsa-utils multimon-ng mpv
 
-# Prepare target directories
-sudo mkdir -p "$APP_DIR"
+echo "Preparing target directories..."
+sudo mkdir -p "$APP_DIR/logs"
 sudo mkdir -p /var/www/html
 sudo mkdir -p /var/lib/eas_alerts/audio_archive
 sudo mkdir -p /var/lib/eas_alerts/uploads
-sudo mkdir -p "$APP_DIR/logs"
 
 # --- 1. Generate Configuration File ---
+echo "Writing Configuration..."
 cat << 'EOF' | sudo tee "$APP_DIR/taendec_config.json" > /dev/null
 {
   "security": {
@@ -110,6 +105,7 @@ cat << 'EOF' | sudo tee "$APP_DIR/taendec_config.json" > /dev/null
 EOF
 
 # --- 2. Generate Web UI ---
+echo "Writing Web UI..."
 cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
 <!DOCTYPE html>
 <html lang="en">
@@ -658,10 +654,11 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
 EOF
 
 # --- 3. Generate TaENDEC Daemon ---
+echo "Writing Python Daemon..."
 cat << 'EOF' | sudo tee "$APP_DIR/endec_system.py" > /dev/null
 #!/usr/bin/env python3
 """
-TaENDEC Master Telemetry & Streaming Daemon (v6.3.4 - Discord Webhook Hotfix)
+TaENDEC Master Telemetry & Streaming Daemon
 """
 
 import os
@@ -835,19 +832,13 @@ def translate_same_to_speech(header_str, start_time_dt=None):
     return f"{prefix} for the following areas: {loc_string}; starting at {start_str}, effective until {end_str}. This message is from {sender_clean}."
 
 def dispatch_discord_webhook(raw_header, additional_text="", wav_path=None):
-    if not requests:
-        logger.error("[DISCORD] 'requests' module missing. Webhooks aborted. Run: sudo apt install python3-requests")
-        return
-
+    if not requests: return
     config = load_taendec_config()
     outputs = config.get("outputs", {})
-    
     if not outputs.get("enable_discord_webhook", False): return
-
     webhook_urls = outputs.get("discord_webhook_urls", outputs.get("discord_webhook_url", []))
     if not webhook_urls: return
-    if isinstance(webhook_urls, str):
-        webhook_urls = [u.strip() for u in webhook_urls.split(",") if u.strip()]
+    if isinstance(webhook_urls, str): webhook_urls = [u.strip() for u in webhook_urls.split(",") if u.strip()]
 
     header_clean = raw_header.replace("EAS:", "").strip("-")
     parts = header_clean.split("-")
@@ -865,14 +856,10 @@ def dispatch_discord_webhook(raw_header, additional_text="", wav_path=None):
     evt_name = EAS_EVENT_NAMES.get(evt_code, f"{evt_code} Alert")
     org_name = EAS_ORIGINATORS.get(org_code, "An EAS Participant")
     
-    if evt_code in WX_WARN or evt_code in CIV_EMERG:
-        color = 16711680; sev_str = "🔴 Extreme / Immediate"; icon = "🚨"
-    elif evt_code in WATCH_ALERTS:
-        color = 16766464; sev_str = "🟡 Severe / Expected"; icon = "⚠️"
-    elif evt_code in TEST_ALERTS:
-        color = 255; sev_str = "🔵 Routine Test"; icon = "ℹ️"
-    else:
-        color = 65280; sev_str = "🟢 Moderate / Advisory"; icon = "📢"
+    if evt_code in WX_WARN or evt_code in CIV_EMERG: color = 16711680; sev_str = "🔴 Extreme / Immediate"; icon = "🚨"
+    elif evt_code in WATCH_ALERTS: color = 16766464; sev_str = "🟡 Severe / Expected"; icon = "⚠️"
+    elif evt_code in TEST_ALERTS: color = 255; sev_str = "🔵 Routine Test"; icon = "ℹ️"
+    else: color = 65280; sev_str = "🟢 Moderate / Advisory"; icon = "📢"
         
     try: local_tz = tzlocal.get_localzone()
     except: local_tz = datetime.now().astimezone().tzinfo
@@ -896,8 +883,7 @@ def dispatch_discord_webhook(raw_header, additional_text="", wav_path=None):
     ]
     
     has_audio = wav_path and os.path.exists(wav_path)
-    if has_audio:
-        embed_fields.insert(2, {"name": "📻 Audio Capture", "value": "Listen to the broadcast audio attached below.", "inline": True})
+    if has_audio: embed_fields.insert(2, {"name": "📻 Audio Capture", "value": "Listen to the broadcast audio attached below.", "inline": True})
 
     payload = {
         "username": outputs.get("discord_username") or "TaENDEC System",
@@ -912,28 +898,17 @@ def dispatch_discord_webhook(raw_header, additional_text="", wav_path=None):
     }
 
     discord_avatar = outputs.get("discord_avatar_url")
-    if discord_avatar:
-        payload["avatar_url"] = discord_avatar
+    if discord_avatar: payload["avatar_url"] = discord_avatar
 
     for url in webhook_urls:
         try:
-            logger.info(f"[DISCORD] Dispatching webhook to {url[:30]}...")
             if has_audio:
                 with open(wav_path, "rb") as audio_file:
-                    form_data = {
-                        "payload_json": (None, json.dumps(payload), "application/json"),
-                        "files[0]": (os.path.basename(wav_path), audio_file, "audio/wav")
-                    }
-                    res = requests.post(url, files=form_data, timeout=15)
+                    form_data = {"payload_json": (None, json.dumps(payload), "application/json"), "files[0]": (os.path.basename(wav_path), audio_file, "audio/wav")}
+                    requests.post(url, files=form_data, timeout=15)
             else:
-                res = requests.post(url, json=payload, timeout=10)
-            
-            if res.status_code not in (200, 204):
-                logger.error(f"[DISCORD] Failed (HTTP {res.status_code}): {res.text}")
-            else:
-                logger.info(f"[DISCORD] Successfully transmitted to {url[:30]}...")
-        except Exception as e:
-            logger.error(f"[DISCORD] Webhook dispatch failed for URL {url[:30]}... : {e}")
+                requests.post(url, json=payload, timeout=10)
+        except Exception: pass
 
 def dispatch_alert_json(raw_header, additional_text="", has_audio=True):
     config = load_taendec_config()
@@ -1453,17 +1428,116 @@ class APIHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if not self.verify_auth(): return
+        
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length)
+        
+        try:
+            payload = json.loads(post_data.decode("utf-8"))
+        except:
+            payload = {}
+
+        if self.path == "/api/config":
+            try:
+                with open(CONFIG_FILE, "w") as f:
+                    json.dump(payload, f, indent=2)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "Configuration Saved Successfully"}).encode("utf-8"))
+            except Exception as e:
+                self.send_error(500, str(e))
+                
+        elif self.path == "/api/transmit":
+            payload["type"] = "WEB"
+            ALERT_QUEUE.put(payload)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "Alert Queued for Live Transmission"}).encode("utf-8"))
+            
+        elif self.path == "/api/schedule":
+            payload["type"] = "WEB"
+            start_str = payload.get("startTime", datetime.now().isoformat())
+            # Basic ISO format parsing
+            start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+            with STATE_LOCK:
+                SCHEDULED_ALERTS.append({"time": start_dt.timestamp(), "payload": payload})
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "Alert Scheduled Successfully"}).encode("utf-8"))
+            
+        elif self.path == "/api/upload":
+            try:
+                filename = payload.get("filename", "upload.bin")
+                safe_name = "".join(c for c in filename if c.isalnum() or c in "._- ")
+                file_path = os.path.join(UPLOAD_DIR, safe_name)
+                
+                raw_data = payload.get("data", "")
+                if "," in raw_data:
+                    raw_data = raw_data.split(",")[1]
+                    
+                with open(file_path, "wb") as f:
+                    f.write(base64.b64decode(raw_data))
+                    
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "File Uploaded", "path": file_path}).encode("utf-8"))
+            except Exception as e:
+                self.send_error(500, f"Upload failed: {e}")
+        else:
+            self.send_error(404, "Endpoint Not Found")
+
+if __name__ == "__main__":
+    logger.info("Starting TaENDEC Master Daemon...")
+    
+    threading.Thread(target=background_audio_worker, daemon=True).start()
+    threading.Thread(target=alert_playback_worker, daemon=True).start()
+    threading.Thread(target=dynamic_monitor_manager, daemon=True).start()
+    threading.Thread(target=schedule_worker, daemon=True).start()
+    threading.Thread(target=automated_test_worker, daemon=True).start()
+    threading.Thread(target=recording_timeout_worker, daemon=True).start()
+    
+    launch_idle_screen()
+    
+    try:
+        server = HTTPServer(("0.0.0.0", STATUS_SERVER_PORT), APIHandler)
+        logger.info(f"Web UI and API listening on port {STATUS_SERVER_PORT}")
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"Server crashed: {e}")
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if MPV_PROCESS:
+            try:
+                MPV_PROCESS.terminate()
+            except:
+                pass
+        logger.info("TaENDEC Daemon shutting down.")
 EOF
 
+# Inject the dynamic username into the generated python script
+echo "Applying user permissions to $APP_USER..."
 sudo sed -i "s|APP_USER_PLACEHOLDER|$APP_USER|g" "$APP_DIR/endec_system.py"
+
+# Enforce strict correct ownership for the generated files and log directory
+sudo chown -R "$APP_USER:$APP_USER" "$APP_DIR/logs"
+sudo chown "$APP_USER:$APP_USER" "$APP_DIR/taendec_config.json"
+sudo chown "$APP_USER:$APP_USER" "$APP_DIR/endec_system.py"
+sudo chown -R "$APP_USER:$APP_USER" /var/lib/eas_alerts
 sudo chmod +x "$APP_DIR/endec_system.py"
 
 # --- 4. Move FIPS CSV File ---
 if [ -f "/home/$APP_USER/TaENDEC/FIPS Codes.csv" ]; then
-    sudo mv "/home/$APP_USER/TaENDEC/FIPS Codes.csv" "/home/$APP_USER/" 2>/dev/null || true
+    echo "Moving FIPS Codes.csv into root working directory..."
+    mv "/home/$APP_USER/TaENDEC/FIPS Codes.csv" "/home/$APP_USER/"
 fi
 
 # --- 5. Generate and Enable systemd Service ---
+echo "Generating and enabling systemd service..."
 SERVICE_NAME="taendec.service"
 SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
 
@@ -1489,4 +1563,4 @@ sudo chmod 644 "$SERVICE_PATH"
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$SERVICE_NAME"
 
-sudo chmod +x /home/endec
+echo "Installation complete! The TaENDEC daemon should now be fully stabilized and running as user: $APP_USER."
