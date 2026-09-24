@@ -24,7 +24,7 @@ APP_DIR="/home/$APP_USER"
 
 echo "Installing dependencies..."
 sudo apt update
-sudo apt install -y python3-requests python3-tzlocal ffmpeg espeak-ng alsa-utils multimon-ng mpv
+sudo apt install -y python3-requests python3-tzlocal ffmpeg espeak-ng alsa-utils multimon-ng mpv apache2
 
 echo "Preparing target directories..."
 sudo mkdir -p "$APP_DIR/logs"
