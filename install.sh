@@ -24,13 +24,31 @@ APP_DIR="/home/$APP_USER"
 
 echo "Installing dependencies..."
 sudo apt update
-sudo apt install -y python3-requests python3-tzlocal ffmpeg espeak-ng alsa-utils multimon-ng mpv apache2
+sudo apt install -y python3-requests python3-tzlocal ffmpeg espeak-ng alsa-utils multimon-ng mpv fonts-freefont-ttf fonts-liberation fonts-dejavu sox libsox-fmt-all
+
+# Add user to audio group immediately
+sudo usermod -aG audio "$APP_USER"
 
 echo "Preparing target directories..."
 sudo mkdir -p "$APP_DIR/logs"
 sudo mkdir -p /var/www/html
 sudo mkdir -p /var/lib/eas_alerts/audio_archive
 sudo mkdir -p /var/lib/eas_alerts/uploads
+
+# --- Interactive ALSA Prompt ---
+echo ""
+echo "=================================================================="
+echo "Available Audio Devices:"
+sudo aplay -l
+echo "=================================================================="
+echo "Please enter the ALSA device string you want to use for alert audio output."
+echo "Look at the 'card' and 'device' numbers above."
+echo "Example: If Card 0, Device 3 is your preferred output, type: plughw:0,3"
+echo "Press ENTER to default to: plughw:0,0"
+read -p "ALSA Device [plughw:0,0]: " ALSA_DEVICE
+ALSA_DEVICE=${ALSA_DEVICE:-plughw:0,0}
+echo "Using ALSA Device: $ALSA_DEVICE"
+echo ""
 
 # --- 1. Generate Configuration File ---
 echo "Writing Configuration..."
@@ -702,7 +720,7 @@ ALERT_WAV_FILE = os.path.join(PERSISTENT_AUDIO_DIR, "tts_temp.wav")
 COMPILED_ALERT_WAV = os.path.join(PERSISTENT_AUDIO_DIR, "compiled_alert.wav")
 
 STATUS_SERVER_PORT = 8085
-LOCAL_HW_OUTPUT = "plughw:0,0"
+LOCAL_HW_OUTPUT = "ALSA_DEVICE_PLACEHOLDER"
 BARESIP_TAP_DEVICE = "plughw:1,1,0"
 
 MAX_RECORDING_TIMEOUT = 210
@@ -965,7 +983,9 @@ def get_audio_clip_samples(file_path, sample_rate=22050):
         with wave.open(norm_path, "rb") as wf:
             num_frames = wf.getnframes()
             return list(struct.unpack(f"<{num_frames}h", wf.readframes(num_frames)))
-    except: return []
+    except Exception as e:
+        logger.error(f"Clip generation failed: {e}")
+        return []
 
 def compile_full_eas_audio(raw_header, recorded_wav_path=None, tts_text="", voice_engine="espeak", output_wav_path=COMPILED_ALERT_WAV):
     sample_rate = 22050
@@ -1012,7 +1032,8 @@ def compile_full_eas_audio(raw_header, recorded_wav_path=None, tts_text="", voic
                 voice_samples = all_voice_samples[trim_start:trim_end] if trim_end > trim_start else all_voice_samples
             else:
                 voice_samples = get_audio_clip_samples(recorded_wav_path, sample_rate)
-        except: pass
+        except Exception as e:
+            logger.error(f"Failed to process recorded audio: {e}")
     elif tts_text:
         has_audio_payload = True
         try:
@@ -1023,7 +1044,8 @@ def compile_full_eas_audio(raw_header, recorded_wav_path=None, tts_text="", voic
             with wave.open(norm_wav, "rb") as wf:
                 num_frames = wf.getnframes()
                 voice_samples = list(struct.unpack(f"<{num_frames}h", wf.readframes(num_frames)))
-        except: pass
+        except Exception as e:
+            logger.error(f"TTS audio generation failed: {e}")
 
     prefix_samples = get_audio_clip_samples(prefix_path, sample_rate)
     if prefix_samples:
@@ -1164,7 +1186,7 @@ def generate_alert_card(translated_text, additional_text=""):
         try:
             subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=0x0a0a0a:s=1920x1080:rate=1", "-vf", filtergraph, "-vframes", "1", img_path], check=True)
             generated_images.append(img_path)
-        except: pass
+        except Exception as e: logger.error(f"Failed to generate video card: {e}")
     return generated_images
 
 def launch_mpv_display(media_sources):
@@ -1184,8 +1206,13 @@ def stop_mpv_display():
     launch_idle_screen()
 
 def stream_and_play_alert_wav(wav_path):
-    proc_alsa = subprocess.Popen(["aplay", "-D", LOCAL_HW_OUTPUT, wav_path], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    proc_alsa.wait()
+    try:
+        proc_alsa = subprocess.Popen(["aplay", "-D", LOCAL_HW_OUTPUT, wav_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, stderr = proc_alsa.communicate()
+        if proc_alsa.returncode != 0:
+            logger.error(f"Playback failed! Code {proc_alsa.returncode}: {stderr.decode()}")
+    except Exception as e:
+        logger.error(f"Playback subprocess failed: {e}")
 
 def background_audio_worker():
     global BG_AUDIO_PROC
@@ -1459,7 +1486,6 @@ class APIHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/schedule":
             payload["type"] = "WEB"
             start_str = payload.get("startTime", datetime.now().isoformat())
-            # Basic ISO format parsing
             start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
             with STATE_LOCK:
                 SCHEDULED_ALERTS.append({"time": start_dt.timestamp(), "payload": payload})
@@ -1519,9 +1545,10 @@ if __name__ == "__main__":
         logger.info("TaENDEC Daemon shutting down.")
 EOF
 
-# Inject the dynamic username into the generated python script
-echo "Applying user permissions to $APP_USER..."
+# Inject the dynamic username and ALSA device into the generated python script
+echo "Applying user permissions to $APP_USER and binding ALSA device..."
 sudo sed -i "s|APP_USER_PLACEHOLDER|$APP_USER|g" "$APP_DIR/endec_system.py"
+sudo sed -i "s|ALSA_DEVICE_PLACEHOLDER|$ALSA_DEVICE|g" "$APP_DIR/endec_system.py"
 
 # Enforce strict correct ownership for the generated files and log directory
 sudo chown -R "$APP_USER:$APP_USER" "$APP_DIR/logs"
@@ -1549,6 +1576,7 @@ After=network.target sound.target
 [Service]
 Type=simple
 User=$APP_USER
+SupplementaryGroups=audio
 WorkingDirectory=$APP_DIR
 ExecStart=/usr/bin/python3 $APP_DIR/endec_system.py
 Restart=always
@@ -1563,4 +1591,4 @@ sudo chmod 644 "$SERVICE_PATH"
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$SERVICE_NAME"
 
-echo "Installation complete! The TaENDEC daemon should now be fully stabilized and running as user: $APP_USER."
+echo "Installation complete! The TaENDEC daemon should now be fully stabilized, outputting audio to $ALSA_DEVICE, and running as user: $APP_USER."
