@@ -42,13 +42,8 @@ TaENDEC includes an automated installation script that sets up dependencies, con
 2. Ensure `FIPS Codes.csv` is included in the directory.
 3. Make the installer executable:
    `chmod +x install.sh`
-
-1. Clone or download the repository to your Debian/Ubuntu machine.
-2. Make the installer executable:
-   `chmod +x install.sh`
-
-Run the installer:
-`./install.sh`
+4. Run the installer:
+   `./install.sh`
 
 Follow the prompt: The script will ask you for a username to install under (defaults to endec). It will automatically create this user, assign the correct audio/video groups, and dynamically configure the daemon for that user.
 
