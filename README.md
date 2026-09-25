@@ -103,3 +103,6 @@ FIPS Reference: `/home/<user>/FIPS Codes.csv`
 Logs: `/home/<user>/logs/alert_history.log`
 
 Audio Archive: `/var/lib/eas_alerts/audio_archive/`
+
+
+# Credits to https://github.com/wagwan-piffting-blud/EAS-Tools for the Web UI design's inspiration. The idea of using `espeak-ng` was NOT inspired by EAS Tools, it was the most readily available TTS engine when TaENDEC was a private project.
