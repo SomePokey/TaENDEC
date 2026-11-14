@@ -52,13 +52,13 @@ else
     SUFFIX="x86"
 fi
 
-wget -qO "$TTS_DIR/cep6" "https://github.com/wagwan-piffting-blud/cep6-rs/releases/download/2026.10.10/cep6-linux-${SUFFIX}"
-wget -qO "$TTS_DIR/vtpaul" "https://github.com/wagwan-piffting-blud/vtns-rs/releases/download/2026.10.27/vtpaul-linux-${SUFFIX}"
-wget -qO "$TTS_DIR/dectalk" "https://github.com/wagwan-piffting-blud/dectalk-rs/releases/download/2026.10.09/dectalk-linux-${SUFFIX}"
-wget -qO "$TTS_DIR/loqdave" "https://github.com/wagwan-piffting-blud/ENDEC_Dave/releases/download/2026.10.06/loqdave-linux-${SUFFIX}"
-wget -qO "$TTS_DIR/spfy" "https://github.com/wagwan-piffting-blud/spfy-rs/releases/latest/download/spfy-linux-${SUFFIX}"
+sudo wget -qO "$TTS_DIR/cep6" "https://github.com/wagwan-piffting-blud/cep6-rs/releases/download/2026.10.10/cep6-linux-${SUFFIX}"
+sudo wget -qO "$TTS_DIR/vtpaul" "https://github.com/wagwan-piffting-blud/vtns-rs/releases/download/2026.10.27/vtpaul-linux-${SUFFIX}"
+sudo wget -qO "$TTS_DIR/dectalk" "https://github.com/wagwan-piffting-blud/dectalk-rs/releases/download/2026.10.09/dectalk-linux-${SUFFIX}"
+sudo wget -qO "$TTS_DIR/loqdave" "https://github.com/wagwan-piffting-blud/ENDEC_Dave/releases/download/2026.10.06/loqdave-linux-${SUFFIX}"
+sudo wget -qO "$TTS_DIR/spfy" "https://github.com/wagwan-piffting-blud/spfy-rs/releases/latest/download/spfy-linux-${SUFFIX}"
 
-chmod +x "$TTS_DIR/cep6" "$TTS_DIR/vtpaul" "$TTS_DIR/dectalk" "$TTS_DIR/loqdave" "$TTS_DIR/spfy"
+sudo chmod +x "$TTS_DIR/cep6" "$TTS_DIR/vtpaul" "$TTS_DIR/dectalk" "$TTS_DIR/loqdave" "$TTS_DIR/spfy"
 
 echo "Downloading and extracting VoiceText voice data..."
 wget -qO /tmp/VoiceText.zip "https://uploads.wagspuzzle.space/VoiceText.zip"
