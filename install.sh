@@ -22,9 +22,9 @@ fi
 APP_USER="$USER"
 APP_DIR="/home/$APP_USER"
 
-echo "Installing dependencies..."
+echo "Installing system dependencies..."
 sudo apt update
-sudo apt install -y python3-requests python3-tzlocal ffmpeg espeak-ng alsa-utils multimon-ng mpv fonts-freefont-ttf fonts-liberation fonts-dejavu sox libsox-fmt-all
+sudo apt install -y python3-requests python3-tzlocal ffmpeg espeak-ng unzip alsa-utils multimon-ng mpv fonts-freefont-ttf fonts-liberation fonts-dejavu sox libsox-fmt-all
 
 # Add user to audio group immediately
 sudo usermod -aG audio "$APP_USER"
@@ -34,6 +34,30 @@ sudo mkdir -p "$APP_DIR/logs"
 sudo mkdir -p /var/www/html
 sudo mkdir -p /var/lib/eas_alerts/audio_archive
 sudo mkdir -p /var/lib/eas_alerts/uploads
+sudo mkdir -p /opt/taendec_tts
+
+# --- Download Offline Broadcast TTS Engines ---
+echo "Downloading offline broadcast TTS engines (vtpaul, cep6, dectalk, loqdave, spfy)..."
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+    SUFFIX="amd64"
+else
+    SUFFIX="x86"
+fi
+
+sudo wget -qO /opt/taendec_tts/cep6 "https://github.com/wagwan-piffting-blud/cep6-rs/releases/download/2026.10.10/cep6-linux-${SUFFIX}"
+sudo wget -qO /opt/taendec_tts/vtpaul "https://github.com/wagwan-piffting-blud/vtns-rs/releases/download/2026.10.27/vtpaul-linux-${SUFFIX}"
+sudo wget -qO /opt/taendec_tts/dectalk "https://github.com/wagwan-piffting-blud/dectalk-rs/releases/download/2026.10.09/dectalk-linux-${SUFFIX}"
+sudo wget -qO /opt/taendec_tts/loqdave "https://github.com/wagwan-piffting-blud/ENDEC_Dave/releases/download/2026.10.06/loqdave-linux-${SUFFIX}"
+sudo wget -qO /opt/taendec_tts/spfy "https://github.com/wagwan-piffting-blud/spfy-rs/releases/latest/download/spfy-linux-${SUFFIX}"
+
+sudo chmod +x /opt/taendec_tts/cep6 /opt/taendec_tts/vtpaul /opt/taendec_tts/dectalk /opt/taendec_tts/loqdave /opt/taendec_tts/spfy
+
+echo "Downloading and extracting VoiceText voice data..."
+sudo wget -qO /tmp/VoiceText.zip "https://uploads.wagspuzzle.space/VoiceText.zip"
+sudo unzip -q -o /tmp/VoiceText.zip -d /opt/taendec_tts/
+sudo rm -f /tmp/VoiceText.zip
+sudo chown -R "$APP_USER:$APP_USER" /opt/taendec_tts
 
 # --- Interactive ALSA Prompt ---
 echo ""
@@ -61,7 +85,8 @@ cat << 'EOF' | sudo tee "$APP_DIR/taendec_config.json" > /dev/null
   },
   "general": {
     "sender_id": "TaENDEC ",
-    "timezone": "America/Chicago"
+    "timezone": "America/Chicago",
+    "default_voice_engine": "vtpaul"
   },
   "audio_processing": {
     "pre_alert_pause_ms": 1000,
@@ -98,7 +123,29 @@ cat << 'EOF' | sudo tee "$APP_DIR/taendec_config.json" > /dev/null
     "enable_discord_webhook": false,
     "discord_webhook_urls": [],
     "discord_username": "TaENDEC System",
-    "discord_avatar_url": ""
+    "discord_avatar_url": "",
+    "gotify": {
+      "enabled": false,
+      "url": "",
+      "token": ""
+    }
+  },
+  "wea_logger": {
+    "enabled": false,
+    "discord_webhook": ""
+  },
+  "capcp": {
+    "enabled": false,
+    "lang": "en-CA",
+    "tone": "pelmorex",
+    "prefix": "",
+    "suffix": ""
+  },
+  "icecast": {
+    "enabled": false,
+    "server_url": "",
+    "bg_music_url": "",
+    "tech_diff_file": ""
   },
   "details_channel": {
     "mode": "static_screen",
@@ -129,7 +176,7 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>TaENDEC Web Controller v6.3.2</title>
+<title>TaENDEC Web Controller v6.4.0</title>
 <style>
   body { background-color: #0d0d0d; color: #e0e0e0; font-family: monospace, monospace; padding: 20px; }
   .nav-tabs { border-bottom: 2px solid #333; margin-bottom: 20px; }
@@ -150,7 +197,7 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
   .settings-panel { background: #151515; padding: 15px; border: 1px solid #333; }
   .settings-panel h4 { margin-top: 0; color: #ff6600; border-bottom: 1px solid #333; padding-bottom: 5px; }
   .settings-panel h5 { margin-top: 15px; margin-bottom: 5px; color: #ccc; border-bottom: 1px dashed #333; padding-bottom: 4px; }
-  .upload-group { display: flex; gap: 10px; align-items: center; margin-top: 5px; }
+  .upload-group { display: flex; gap: 10px; align-items: center; margin-top: 5px; margin-bottom: 10px; }
 </style>
 </head>
 <body>
@@ -217,6 +264,17 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
       </div>
       <div class="section-divider"></div>
       <div class="form-group">
+        <label>TTS Voice Engine:</label>
+        <select id="voiceEngine">
+          <option value="vtpaul">VoiceText (NWS Paul)</option>
+          <option value="cep6">Cepstral (cep6)</option>
+          <option value="dectalk">DECtalk (dectalk-rs)</option>
+          <option value="loqdave">Loquendo Dave (loqdave)</option>
+          <option value="spfy">Speechify (spfy)</option>
+          <option value="espeak">eSpeak-NG</option>
+        </select>
+      </div>
+      <div class="form-group">
         <label>Custom Voice Audio (Optional):</label>
         <div class="upload-group" style="display:inline-flex; width: 400px; margin-top: 0;">
           <input type="text" id="voice_wav_path" placeholder="Overrides TTS if uploaded..." readonly style="flex-grow: 1;">
@@ -251,6 +309,15 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
         <h4>General & Audio Settings</h4>
         <label>Sender ID:</label> <input type="text" id="cfg_sender_id" maxlength="8"><br>
         <label>System Timezone:</label> <input type="text" id="cfg_timezone" placeholder="America/Chicago"><br>
+        <label>Default Voice Engine:</label>
+        <select id="cfg_default_voice">
+          <option value="vtpaul">VoiceText (NWS Paul)</option>
+          <option value="cep6">Cepstral (cep6)</option>
+          <option value="dectalk">DECtalk (dectalk-rs)</option>
+          <option value="loqdave">Loquendo Dave (loqdave)</option>
+          <option value="spfy">Speechify (spfy)</option>
+          <option value="espeak">eSpeak-NG</option>
+        </select><br>
         <label>Pre-Alert Pause (ms):</label> <input type="number" id="cfg_pause" min="0" max="7000"><br>
       </div>
 
@@ -270,6 +337,58 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
         <button type="button" class="btn-orange btn-sm" onclick="addMonitorRow()">+ Add Monitor</button>
       </div>
 
+      <div class="settings-panel">
+        <h4>CAP-CP / Alert Ready (Canada)</h4>
+        <label style="width:auto;"><input type="checkbox" id="cfg_capcp_enabled"> Enable NAAD TCP Stream</label><br><br>
+        
+        <label>Preferred Language:</label>
+        <select id="cfg_capcp_lang">
+            <option value="en-CA">English (en-CA)</option>
+            <option value="fr-CA">French (fr-CA)</option>
+        </select><br><br>
+        
+        <label>Tone / Header Style:</label>
+        <select id="cfg_capcp_tone">
+            <option value="pelmorex">Pelmorex Canadian Tone</option>
+            <option value="same">Standard SAME Headers</option>
+        </select><br><br>
+        
+        <label>Alert Ready Prefix Audio:</label>
+        <div class="upload-group">
+            <input type="text" id="cfg_capcp_pre" placeholder="Path to prefix .wav" style="flex-grow:1;">
+            <input type="file" id="f_capcp_pre" accept="audio/*" style="width:120px;">
+            <button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_capcp_pre', 'cfg_capcp_pre')">Up</button>
+        </div>
+        
+        <label>Alert Ready Suffix Audio:</label>
+        <div class="upload-group">
+            <input type="text" id="cfg_capcp_suf" placeholder="Path to suffix .wav" style="flex-grow:1;">
+            <input type="file" id="f_capcp_suf" accept="audio/*" style="width:120px;">
+            <button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_capcp_suf', 'cfg_capcp_suf')">Up</button>
+        </div>
+      </div>
+
+      <div class="settings-panel">
+        <h4>FEMA PublicWEA Logger</h4>
+        <label style="width:auto;"><input type="checkbox" id="cfg_wea_enabled"> Enable PublicWEA Polling</label><br><br>
+        <label>WEA Discord Webhook URL:</label><br>
+        <input type="text" id="cfg_wea_webhook" placeholder="https://discord.com/api/webhooks/..." style="width: 95%;"><br><br>
+        <small style="color:#888;">Polls the official FEMA IPAWS PublicWEA REST feed every 60 seconds and routes alerts to Discord & Gotify.</small>
+      </div>
+
+      <div class="settings-panel" style="grid-column: span 2;">
+        <h4>Gapless Icecast Streaming & Failover</h4>
+        <label style="width:auto;"><input type="checkbox" id="cfg_ice_enabled"> Enable Icecast Broadcast Stream</label><br><br>
+        <label>Icecast Mount URL (with auth):</label> <input type="text" id="cfg_ice_server" placeholder="http://source:password@localhost:8000/eas.mp3" style="width: 60%;"><br><br>
+        <label>Background Music Stream URL:</label> <input type="text" id="cfg_ice_bg" placeholder="http://stream.example.com:8000/music" style="width: 60%;"><br><br>
+        <label>Technical Difficulties Fallback Audio:</label>
+        <div class="upload-group">
+            <input type="text" id="cfg_ice_tech" placeholder="/var/lib/eas_alerts/uploads/tech_diff.wav" style="width: 60%;">
+            <input type="file" id="f_ice_tech" accept="audio/*">
+            <button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_ice_tech', 'cfg_ice_tech')">Upload</button>
+        </div>
+      </div>
+
       <div class="settings-panel" style="grid-column: span 2;">
         <h4>Outputs & Webhook Automations</h4>
         <div style="display:flex; gap:30px;">
@@ -278,9 +397,14 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
                 <label><input type="checkbox" id="cfg_enable_http"> Enable HTTP POST Notifications</label><br>
                 <label>Station API IP/Host:</label> <input type="text" id="cfg_tv_ip" placeholder="192.168.12.199" style="width: 90%;"><br>
                 <label>Multicast Target Address:</label> <input type="text" id="cfg_tv_multicast" placeholder="224.0.0.1:36332" style="width: 90%;"><br>
+
+                <h5>Gotify Push Notifications</h5>
+                <label><input type="checkbox" id="cfg_gotify_enabled"> Enable Gotify Alerts</label><br>
+                <label>Gotify Server URL:</label> <input type="text" id="cfg_gotify_url" placeholder="http://192.168.12.173" style="width: 90%;"><br>
+                <label>Gotify App Token:</label> <input type="text" id="cfg_gotify_token" placeholder="A..." style="width: 90%;"><br>
             </div>
             <div style="flex:1;">
-                <h5>Discord Integration</h5>
+                <h5>Discord Integration (SAME / CAP)</h5>
                 <label><input type="checkbox" id="cfg_enable_discord"> Dispatch Alerts to Discord</label><br>
                 <label>Webhook URL(s) (comma-separated):</label> <input type="text" id="cfg_discord_urls" placeholder="https://..., https://..." style="width: 90%;"><br>
                 <label>Bot Username Override:</label> <input type="text" id="cfg_discord_username" placeholder="TaENDEC System" style="width: 90%;"><br>
@@ -435,6 +559,12 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
         opt.value = `0${code}`; opt.text = `${name} (${code})`;
         datalist.appendChild(opt);
       }
+
+      const cfgRes = await apiFetch(`http://${window.location.hostname}:${API_PORT}/api/config`);
+      currentConfig = await cfgRes.json();
+      if (currentConfig.general?.default_voice_engine) {
+          document.getElementById("voiceEngine").value = currentConfig.general.default_voice_engine;
+      }
     } catch (e) {
       document.getElementById("loadingUI").style.display = "none";
       if (e.message !== "401") {
@@ -509,6 +639,7 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
 
       document.getElementById("cfg_sender_id").value = currentConfig.general?.sender_id || "TaENDEC ";
       document.getElementById("cfg_timezone").value = currentConfig.general?.timezone || "America/Chicago";
+      document.getElementById("cfg_default_voice").value = currentConfig.general?.default_voice_engine || "vtpaul";
       document.getElementById("cfg_pause").value = currentConfig.audio_processing?.pre_alert_pause_ms || 1000;
 
       const filters = currentConfig.filters || {};
@@ -520,11 +651,36 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
       document.getElementById("monitorsTbody").innerHTML = "";
       for (const [name, url] of Object.entries(monitors)) addMonitorRow(name, url);
 
+      if(currentConfig.capcp) {
+          document.getElementById("cfg_capcp_enabled").checked = currentConfig.capcp.enabled || false;
+          document.getElementById("cfg_capcp_lang").value = currentConfig.capcp.lang || "en-CA";
+          document.getElementById("cfg_capcp_tone").value = currentConfig.capcp.tone || "pelmorex";
+          document.getElementById("cfg_capcp_pre").value = currentConfig.capcp.prefix || "";
+          document.getElementById("cfg_capcp_suf").value = currentConfig.capcp.suffix || "";
+      }
+
+      if(currentConfig.wea_logger) {
+          document.getElementById("cfg_wea_enabled").checked = currentConfig.wea_logger.enabled || false;
+          document.getElementById("cfg_wea_webhook").value = currentConfig.wea_logger.discord_webhook || "";
+      }
+
+      if(currentConfig.icecast) {
+          document.getElementById("cfg_ice_enabled").checked = currentConfig.icecast.enabled || false;
+          document.getElementById("cfg_ice_server").value = currentConfig.icecast.server_url || "";
+          document.getElementById("cfg_ice_bg").value = currentConfig.icecast.bg_music_url || "";
+          document.getElementById("cfg_ice_tech").value = currentConfig.icecast.tech_diff_file || "";
+      }
+
       const outputs = currentConfig.outputs || {};
       document.getElementById("cfg_enable_http").checked = outputs.enable_http_post ?? true;
       document.getElementById("cfg_tv_ip").value = outputs.tv_station_ip || "192.168.12.199";
       document.getElementById("cfg_tv_multicast").value = outputs.tv_multicast_address || outputs.multicast_address || "224.0.0.1:36332";
       
+      const gotify = outputs.gotify || {};
+      document.getElementById("cfg_gotify_enabled").checked = gotify.enabled || false;
+      document.getElementById("cfg_gotify_url").value = gotify.url || "";
+      document.getElementById("cfg_gotify_token").value = gotify.token || "";
+
       document.getElementById("cfg_enable_discord").checked = outputs.enable_discord_webhook ?? false;
       document.getElementById("cfg_discord_urls").value = (outputs.discord_webhook_urls || []).join(", ");
       document.getElementById("cfg_discord_username").value = outputs.discord_username || "TaENDEC System";
@@ -571,7 +727,11 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
         password: document.getElementById("cfg_auth_pass").value || "taendec"
     };
 
-    currentConfig.general = { sender_id: document.getElementById("cfg_sender_id").value.padEnd(8, " ").substring(0, 8), timezone: document.getElementById("cfg_timezone").value };
+    currentConfig.general = { 
+        sender_id: document.getElementById("cfg_sender_id").value.padEnd(8, " ").substring(0, 8), 
+        timezone: document.getElementById("cfg_timezone").value,
+        default_voice_engine: document.getElementById("cfg_default_voice").value
+    };
     
     currentConfig.audio_processing = currentConfig.audio_processing || {};
     currentConfig.audio_processing.pre_alert_pause_ms = parseInt(document.getElementById("cfg_pause").value) || 0;
@@ -604,11 +764,37 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
       if (name && url) currentConfig.monitors[name] = url;
     });
 
+    currentConfig.capcp = {
+        enabled: document.getElementById("cfg_capcp_enabled").checked,
+        lang: document.getElementById("cfg_capcp_lang").value,
+        tone: document.getElementById("cfg_capcp_tone").value,
+        prefix: document.getElementById("cfg_capcp_pre").value.trim(),
+        suffix: document.getElementById("cfg_capcp_suf").value.trim()
+    };
+
+    currentConfig.wea_logger = {
+        enabled: document.getElementById("cfg_wea_enabled").checked,
+        discord_webhook: document.getElementById("cfg_wea_webhook").value.trim()
+    };
+
+    currentConfig.icecast = {
+        enabled: document.getElementById("cfg_ice_enabled").checked,
+        server_url: document.getElementById("cfg_ice_server").value.trim(),
+        bg_music_url: document.getElementById("cfg_ice_bg").value.trim(),
+        tech_diff_file: document.getElementById("cfg_ice_tech").value.trim()
+    };
+
     currentConfig.outputs = currentConfig.outputs || {};
     currentConfig.outputs.enable_http_post = document.getElementById("cfg_enable_http").checked;
     currentConfig.outputs.tv_station_ip = document.getElementById("cfg_tv_ip").value.trim();
     currentConfig.outputs.tv_multicast_address = document.getElementById("cfg_tv_multicast").value.trim();
     
+    currentConfig.outputs.gotify = {
+        enabled: document.getElementById("cfg_gotify_enabled").checked,
+        url: document.getElementById("cfg_gotify_url").value.trim(),
+        token: document.getElementById("cfg_gotify_token").value.trim()
+    };
+
     currentConfig.outputs.enable_discord_webhook = document.getElementById("cfg_enable_discord").checked;
     currentConfig.outputs.discord_webhook_urls = document.getElementById("cfg_discord_urls").value.split(",").map(x => x.trim()).filter(Boolean);
     currentConfig.outputs.discord_username = document.getElementById("cfg_discord_username").value.trim();
@@ -646,7 +832,16 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
     if (!fipsInput.trim()) return alert("Must specify at least one location.");
     const endpoint = currentMode === "send" ? "/api/transmit" : "/api/schedule";
     const payload = {
-      originator: document.getElementById("originator").value, eventCode: document.getElementById("eventType").value, duration: document.getElementById("durHr").value + document.getElementById("durMin").value, fipsCodes: fipsInput, additionalText: document.getElementById("additionalText").value, voiceEngine: "espeak", hasAudio: !!document.getElementById("voice_wav_path").value, voice_wav_path: document.getElementById("voice_wav_path").value, skip_translation_in_tts: document.getElementById("skip_translation").checked, startTime: document.getElementById("startTime").value || new Date().toISOString()
+      originator: document.getElementById("originator").value, 
+      eventCode: document.getElementById("eventType").value, 
+      duration: document.getElementById("durHr").value + document.getElementById("durMin").value, 
+      fipsCodes: fipsInput, 
+      additionalText: document.getElementById("additionalText").value, 
+      voiceEngine: document.getElementById("voiceEngine").value, 
+      hasAudio: !!document.getElementById("voice_wav_path").value, 
+      voice_wav_path: document.getElementById("voice_wav_path").value, 
+      skip_translation_in_tts: document.getElementById("skip_translation").checked, 
+      startTime: document.getElementById("startTime").value || new Date().toISOString()
     };
     try {
       const res = await apiFetch(`http://${window.location.hostname}:${API_PORT}${endpoint}`, { method: "POST", body: JSON.stringify(payload) });
@@ -694,6 +889,8 @@ import subprocess
 import queue
 import re
 import csv
+import socket
+import xml.etree.ElementTree as ET
 import tzlocal
 import urllib.request
 import urllib.parse
@@ -733,6 +930,7 @@ ALERT_QUEUE = queue.Queue()
 ACTIVE_RECORDINGS = {}
 MONITOR_FLAGS = {}
 BG_AUDIO_PROC = None
+ICECAST_ALERT_FILE = None
 
 logger = logging.getLogger("ENDEC")
 logger.setLevel(logging.INFO)
@@ -745,6 +943,7 @@ fh.setFormatter(formatter)
 logger.addHandler(fh)
 
 STREAM_STATUS = {}
+STREAM_STATE = {"override_active": False, "override_url": "", "last_failure_time": None, "intro_clip": "", "intro_mode": "before"}
 ENDEC_STATE = {"current_state": "IDLE / MONITORING", "active_alert": None, "last_event": None, "updated_at": datetime.now(timezone.utc).isoformat()}
 STATE_LOCK = threading.Lock()
 RECORDING_LOCK = threading.Lock()
@@ -911,7 +1110,7 @@ def dispatch_discord_webhook(raw_header, additional_text="", wav_path=None):
             "color": color,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "fields": embed_fields,
-            "footer": {"text": f"Sender: {sender} • TaENDEC Master v6.3.4"}
+            "footer": {"text": f"Sender: {sender} • TaENDEC Master v6.4.0"}
         }]
     }
 
@@ -975,6 +1174,17 @@ def generate_attention_signal_samples(duration_sec=8.0, sample_rate=22050):
         p2 = (p2 + i2) % (2.0 * math.pi)
     return audio_samples
 
+def generate_pelmorex_tone_samples(sample_rate=22050):
+    audio_samples = []
+    tones = [(932.33, 0.25), (1046.50, 0.25)] * 8
+    for freq, dur in tones:
+        phase = 0.0
+        incr = 2.0 * math.pi * freq / sample_rate
+        for _ in range(int(sample_rate * dur)):
+            audio_samples.append(int(32767.0 * 0.50 * math.sin(phase)))
+            phase = (phase + incr) % (2.0 * math.pi)
+    return audio_samples
+
 def get_audio_clip_samples(file_path, sample_rate=22050):
     if not file_path or not os.path.exists(file_path): return []
     try:
@@ -987,7 +1197,7 @@ def get_audio_clip_samples(file_path, sample_rate=22050):
         logger.error(f"Clip generation failed: {e}")
         return []
 
-def compile_full_eas_audio(raw_header, recorded_wav_path=None, tts_text="", voice_engine="espeak", output_wav_path=COMPILED_ALERT_WAV):
+def compile_full_eas_audio(raw_header, recorded_wav_path=None, tts_text="", voice_engine="vtpaul", output_wav_path=COMPILED_ALERT_WAV, is_capcp=False, capcp_tone="pelmorex", capcp_prefix="", capcp_suffix=""):
     sample_rate = 22050
     header_clean = raw_header.replace("EAS:", "").strip()
     parts = header_clean.split("-")
@@ -996,31 +1206,35 @@ def compile_full_eas_audio(raw_header, recorded_wav_path=None, tts_text="", voic
     config = load_taendec_config()
     ap_config = config.get("audio_processing", {})
     
-    cat_prefix, cat_suffix = "", ""
-    if evt_code in TEST_ALERTS:
-        cat_prefix = ap_config.get("prefixes", {}).get("TEST", "")
-        cat_suffix = ap_config.get("suffixes", {}).get("TEST", "")
-    elif evt_code in WX_WARN:
-        cat_prefix = ap_config.get("prefixes", {}).get("WEATHER_WARNING", "")
-        cat_suffix = ap_config.get("suffixes", {}).get("WEATHER_WARNING", "")
-    elif evt_code in CIV_EMERG:
-        cat_prefix = ap_config.get("prefixes", {}).get("CIVIL_EMERGENCY", "")
-        cat_suffix = ap_config.get("suffixes", {}).get("CIVIL_EMERGENCY", "")
-    elif evt_code in WATCH_ALERTS:
-        cat_prefix = ap_config.get("prefixes", {}).get("WATCH", "")
-        cat_suffix = ap_config.get("suffixes", {}).get("WATCH", "")
-    elif evt_code in ADVISORY_ALERTS:
-        cat_prefix = ap_config.get("prefixes", {}).get("ADVISORY", "")
-        cat_suffix = ap_config.get("suffixes", {}).get("ADVISORY", "")
+    if is_capcp:
+        prefix_path = capcp_prefix
+        suffix_path = capcp_suffix
+    else:
+        cat_prefix, cat_suffix = "", ""
+        if evt_code in TEST_ALERTS:
+            cat_prefix = ap_config.get("prefixes", {}).get("TEST", "")
+            cat_suffix = ap_config.get("suffixes", {}).get("TEST", "")
+        elif evt_code in WX_WARN:
+            cat_prefix = ap_config.get("prefixes", {}).get("WEATHER_WARNING", "")
+            cat_suffix = ap_config.get("suffixes", {}).get("WEATHER_WARNING", "")
+        elif evt_code in CIV_EMERG:
+            cat_prefix = ap_config.get("prefixes", {}).get("CIVIL_EMERGENCY", "")
+            cat_suffix = ap_config.get("suffixes", {}).get("CIVIL_EMERGENCY", "")
+        elif evt_code in WATCH_ALERTS:
+            cat_prefix = ap_config.get("prefixes", {}).get("WATCH", "")
+            cat_suffix = ap_config.get("suffixes", {}).get("WATCH", "")
+        elif evt_code in ADVISORY_ALERTS:
+            cat_prefix = ap_config.get("prefixes", {}).get("ADVISORY", "")
+            cat_suffix = ap_config.get("suffixes", {}).get("ADVISORY", "")
 
-    prefix_path = cat_prefix if cat_prefix else ap_config.get("prefixes", {}).get("ALL_ALERTS", "")
-    suffix_path = cat_suffix if cat_suffix else ap_config.get("suffixes", {}).get("ALL_ALERTS", "")
+        prefix_path = cat_prefix if cat_prefix else ap_config.get("prefixes", {}).get("ALL_ALERTS", "")
+        suffix_path = cat_suffix if cat_suffix else ap_config.get("suffixes", {}).get("ALL_ALERTS", "")
 
     master_samples = []
     voice_samples = []
     has_audio_payload = False
 
-    if recorded_wav_path and os.path.exists(recorded_wav_path) and os.path.getsize(recorded_wav_path) > 1000:
+    if recorded_wav_path and os.path.exists(recorded_wav_path) and os.path.getsize(recorded_wav_path) > 44:
         has_audio_payload = True
         try:
             if "raw_capture" in recorded_wav_path:
@@ -1038,30 +1252,47 @@ def compile_full_eas_audio(raw_header, recorded_wav_path=None, tts_text="", voic
         has_audio_payload = True
         try:
             tts_text_phonetic = tts_text.replace("SpeX", "Specs")
-            subprocess.run(["espeak-ng", "-v", "en-us", "-s", "150", "-p", "40", tts_text_phonetic, "-w", ALERT_WAV_FILE], check=True)
+            if voice_engine == "cep6":
+                subprocess.run(["/opt/taendec_tts/cep6", "-o", ALERT_WAV_FILE, tts_text_phonetic], check=True)
+            elif voice_engine == "vtpaul":
+                subprocess.run(["/opt/taendec_tts/vtpaul", "-d", "/opt/taendec_tts/VoiceText", "-o", ALERT_WAV_FILE, tts_text_phonetic], check=True)
+            elif voice_engine == "dectalk":
+                subprocess.run(["/opt/taendec_tts/dectalk", "-o", ALERT_WAV_FILE, tts_text_phonetic], check=True)
+            elif voice_engine == "loqdave":
+                subprocess.run(["/opt/taendec_tts/loqdave", "-o", ALERT_WAV_FILE, tts_text_phonetic], check=True)
+            elif voice_engine == "spfy":
+                subprocess.run(["/opt/taendec_tts/spfy", "-o", ALERT_WAV_FILE, tts_text_phonetic], check=True)
+            else:
+                subprocess.run(["espeak-ng", "-v", "en-us", "-s", "150", "-p", "40", tts_text_phonetic, "-w", ALERT_WAV_FILE], check=True)
+
             norm_wav = "/tmp/tts_norm.wav"
             subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", ALERT_WAV_FILE, "-ar", "22050", "-ac", "1", norm_wav], check=True)
             with wave.open(norm_wav, "rb") as wf:
                 num_frames = wf.getnframes()
                 voice_samples = list(struct.unpack(f"<{num_frames}h", wf.readframes(num_frames)))
         except Exception as e:
-            logger.error(f"TTS audio generation failed: {e}")
+            logger.error(f"TTS audio generation failed ({voice_engine}): {e}")
 
     prefix_samples = get_audio_clip_samples(prefix_path, sample_rate)
     if prefix_samples:
         master_samples.extend(prefix_samples)
         master_samples.extend([0] * int(sample_rate * 0.5))
 
-    master_samples.extend(generate_afsk_burst_samples(header_clean, 3, sample_rate))
-
-    if has_audio_payload:
-        master_samples.extend(generate_attention_signal_samples(8.0, sample_rate))
+    if is_capcp and capcp_tone == "pelmorex":
+        master_samples.extend(generate_pelmorex_tone_samples(sample_rate))
         master_samples.extend([0] * int(sample_rate * 0.5))
-        if voice_samples:
-            master_samples.extend(voice_samples)
+    else:
+        master_samples.extend(generate_afsk_burst_samples(header_clean, 3, sample_rate))
+        if has_audio_payload:
+            master_samples.extend(generate_attention_signal_samples(8.0, sample_rate))
             master_samples.extend([0] * int(sample_rate * 0.5))
 
-    master_samples.extend(generate_afsk_burst_samples("NNNN", 3, sample_rate))
+    if voice_samples:
+        master_samples.extend(voice_samples)
+        master_samples.extend([0] * int(sample_rate * 0.5))
+
+    if not (is_capcp and capcp_tone == "pelmorex"):
+        master_samples.extend(generate_afsk_burst_samples("NNNN", 3, sample_rate))
 
     suffix_samples = get_audio_clip_samples(suffix_path, sample_rate)
     if suffix_samples:
@@ -1160,9 +1391,33 @@ def launch_idle_screen():
         try: MPV_PROCESS = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except: pass
 
-def generate_alert_card(translated_text, additional_text=""):
+def generate_alert_card(translated_text, additional_text="", is_capcp=False):
     config = load_taendec_config()
     if config.get("details_channel", {}).get("mode", "static_screen") == "off": return []
+    
+    if is_capcp:
+        safe_add = additional_text.replace("%", "\\%")
+        body_lines = []
+        for line in safe_add.strip().split("\n"):
+            if line.strip(): body_lines.extend(textwrap.wrap(line.strip(), width=48))
+            else: body_lines.append("")
+        pages = [body_lines[i:i + 12] for i in range(0, len(body_lines), 12)] or [["EMERGENCY ALERT / ALERTE D'URGENCE"]]
+        generated_images = []
+        for idx, page_lines in enumerate(pages):
+            txt_path = f"/tmp/card_text_{idx}.txt"
+            img_path = f"/tmp/alert_card_{idx}.png"
+            with open(txt_path, "w") as f: f.write("\n".join(page_lines))
+            filtergraph = (
+                "drawbox=x=0:y=0:w=1920:h=1080:color=0xb30000@1.0:t=fill,"
+                f"drawtext=font='Sans':textfile='{txt_path}':x=(w-text_w)/2:y=(h-text_h)/2:fontsize=48:fontcolor=white:line_spacing=24"
+            )
+            if len(pages) > 1: filtergraph += f",drawtext=font='Sans':text='Page {idx+1} of {len(pages)}':x=w-text_w-50:y=h-text_h-50:fontsize=36:fontcolor=0xdddddd"
+            try:
+                subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=0xb30000:s=1920x1080:rate=1", "-vf", filtergraph, "-vframes", "1", img_path], check=True)
+                generated_images.append(img_path)
+            except Exception as e: logger.error(f"Failed to generate CAP-CP video card: {e}")
+        return generated_images
+
     safe_trans = translated_text.replace("%", "\\%")
     safe_add = additional_text.replace("%", "\\%")
     body_lines = []
@@ -1206,6 +1461,8 @@ def stop_mpv_display():
     launch_idle_screen()
 
 def stream_and_play_alert_wav(wav_path):
+    global ICECAST_ALERT_FILE
+    ICECAST_ALERT_FILE = wav_path
     try:
         proc_alsa = subprocess.Popen(["aplay", "-D", LOCAL_HW_OUTPUT, wav_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = proc_alsa.communicate()
@@ -1232,6 +1489,142 @@ def background_audio_worker():
                 except subprocess.TimeoutExpired: BG_AUDIO_PROC.kill()
                 BG_AUDIO_PROC = None
         time.sleep(1)
+
+def gapless_icecast_worker():
+    global ICECAST_ALERT_FILE
+    config = load_taendec_config()
+    ice = config.get("icecast", {})
+    if not ice.get("enabled", False) or not ice.get("server_url"): return
+        
+    server_url = ice.get("server_url")
+    tech_diff_path = ice.get("tech_diff_file", "")
+    
+    master_cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error",
+        "-f", "s16le", "-ar", "22050", "-ac", "1", "-i", "pipe:0",
+        "-c:a", "libmp3lame", "-b:a", "128k", "-content_type", "audio/mpeg",
+        "-f", "mp3", server_url
+    ]
+    master_proc = subprocess.Popen(master_cmd, stdin=subprocess.PIPE)
+    
+    bg_proc = None
+    tech_proc = None
+    intro_proc = None
+    last_bg_retry = 0
+    current_state_was_override = False
+    intro_duck_pending = False
+    
+    def spawn_audio_proc(url):
+        if not url: return None
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", url, "-f", "s16le", "-ar", "22050", "-ac", "1", "-"]
+        return subprocess.Popen(cmd, stdout=subprocess.PIPE)
+        
+    def get_active_stream():
+        config = load_taendec_config()
+        normal_url = config.get("icecast", {}).get("bg_music_url", "")
+        with STATE_LOCK:
+            active = STREAM_STATE.get("override_active", False)
+            override_url = STREAM_STATE.get("override_url", "")
+            fail_time = STREAM_STATE.get("last_failure_time")
+            
+        if active and fail_time and (time.time() - fail_time > 120):
+            logger.info("Override stream failed to recover. Reverting to normal.")
+            with STATE_LOCK:
+                STREAM_STATE["override_active"] = False
+                active = False
+                
+        if not active:
+            return normal_url, False
+            
+        actual_url = override_url
+        if "youtube.com" in override_url or "youtu.be" in override_url:
+            try: actual_url = subprocess.check_output(["yt-dlp", "-f", "bestaudio", "-g", override_url]).decode().strip()
+            except Exception as e:
+                logger.error(f"yt-dlp failed: {e}")
+                if not fail_time:
+                    with STATE_LOCK: STREAM_STATE["last_failure_time"] = time.time()
+                return None, True
+                
+        with STATE_LOCK: STREAM_STATE["last_failure_time"] = None
+        return actual_url, True
+
+    while True:
+        if ICECAST_ALERT_FILE and os.path.exists(ICECAST_ALERT_FILE):
+            if bg_proc: bg_proc.kill(); bg_proc = None
+            if tech_proc: tech_proc.kill(); tech_proc = None
+            if intro_proc: intro_proc.kill(); intro_proc = None
+            
+            alert_proc = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-i", ICECAST_ALERT_FILE, "-f", "s16le", "-ar", "22050", "-ac", "1", "-"], stdout=subprocess.PIPE)
+            while ICECAST_ALERT_FILE:
+                chunk = alert_proc.stdout.read(4096)
+                if not chunk: break
+                try: master_proc.stdin.write(chunk); master_proc.stdin.flush()
+                except: break
+            alert_proc.kill()
+            ICECAST_ALERT_FILE = None
+            last_bg_retry = 0
+            continue
+
+        with STATE_LOCK:
+            active_now = STREAM_STATE.get("override_active", False)
+            intro_clip = STREAM_STATE.get("intro_clip", "")
+            intro_mode = STREAM_STATE.get("intro_mode", "before")
+        
+        if active_now != current_state_was_override:
+            if bg_proc: bg_proc.kill(); bg_proc = None
+            if intro_proc: intro_proc.kill(); intro_proc = None
+            current_state_was_override = active_now
+            last_bg_retry = 0
+            intro_duck_pending = False
+            
+            if active_now and intro_clip and os.path.exists(intro_clip):
+                if intro_mode == "before":
+                    intro_proc = spawn_audio_proc(intro_clip)
+                elif intro_mode == "duck":
+                    intro_duck_pending = True
+                
+        chunk = None
+        
+        if intro_proc:
+            chunk = intro_proc.stdout.read(4096)
+            if not chunk:
+                intro_proc.kill(); intro_proc = None
+        
+        if not chunk and bg_proc and bg_proc.poll() is None:
+            chunk = bg_proc.stdout.read(4096)
+            if chunk and tech_proc:
+                tech_proc.kill(); tech_proc = None
+            
+        if not chunk and not intro_proc:
+            if bg_proc: bg_proc.kill(); bg_proc = None
+            
+            if time.time() - last_bg_retry > 5:
+                url, is_override = get_active_stream()
+                if url:
+                    if is_override and intro_duck_pending and intro_clip and os.path.exists(intro_clip):
+                        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", url, "-i", intro_clip, "-filter_complex", "[0:a]volume=0.3[v];[v][1:a]amix=inputs=2:duration=longest:dropout_transition=2", "-f", "s16le", "-ar", "22050", "-ac", "1", "-"]
+                        bg_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+                        intro_duck_pending = False
+                    else:
+                        bg_proc = spawn_audio_proc(url)
+                last_bg_retry = time.time()
+                
+            if tech_diff_path and os.path.exists(tech_diff_path):
+                if not tech_proc or tech_proc.poll() is not None:
+                    tech_proc = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-stream_loop", "-1", "-i", tech_diff_path, "-f", "s16le", "-ar", "22050", "-ac", "1", "-"], stdout=subprocess.PIPE)
+                
+                if tech_proc and tech_proc.poll() is None:
+                    chunk = tech_proc.stdout.read(4096)
+                
+        if chunk:
+            try: master_proc.stdin.write(chunk); master_proc.stdin.flush()
+            except: break
+        else:
+            try:
+                master_proc.stdin.write(bytes(4096))
+                master_proc.stdin.flush()
+                time.sleep(0.092)
+            except: break
 
 def alert_playback_worker():
     while True:
@@ -1266,6 +1659,7 @@ def alert_playback_worker():
                 fips = payload.get("fipsCodes", "027145")
                 dur = payload.get("duration", "0030")
                 org = payload.get("originator", "EAS")
+                is_capcp = payload.get("is_capcp", False)
                 sender = config.get("general", {}).get("sender_id", "TaENDEC ").ljust(8, " ")[:8]
                 header_str = f"ZCZC-{org}-{evt}-{fips}+{dur}-{get_utc_header_timestamp()}-{sender}-"
                 set_endec_state("PROCESSING WEB ALERT", {"event_code": evt, "fips_code": fips})
@@ -1273,28 +1667,39 @@ def alert_playback_worker():
                 has_custom_audio = payload.get("hasAudio", False)
                 voice_wav_path = payload.get("voice_wav_path", None)
                 skip_trans = payload.get("skip_translation_in_tts", False)
-                voice_engine = payload.get("voiceEngine", "espeak")
+                default_v = config.get("general", {}).get("default_voice_engine", "vtpaul")
+                voice_engine = payload.get("voiceEngine", default_v)
                 if config.get("rwt_rmt_scheduler", {}).get("disable_voice", False) and evt in ["RWT", "RMT"]:
                     add_text = ""; skip_trans = True; has_custom_audio = False; voice_wav_path = ""
                 
-                full_translation = translate_same_to_speech(header_str)
+                full_translation = "" if is_capcp else translate_same_to_speech(header_str)
                 if skip_trans: tts_script = add_text
                 elif has_custom_audio: tts_script = ""
                 else: tts_script = full_translation + "\n\n" + add_text if add_text else full_translation
                 
-                compiled_wav, file_name = compile_full_eas_audio(header_str, recorded_wav_path=voice_wav_path, tts_text=tts_script, voice_engine=voice_engine)
-                ALERT_HISTORY.append({"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "header": header_str, "mode": f"WEB TTS ({voice_engine})", "file": file_name})
+                compiled_wav, file_name = compile_full_eas_audio(
+                    header_str, 
+                    recorded_wav_path=voice_wav_path, 
+                    tts_text=tts_script, 
+                    voice_engine=voice_engine,
+                    is_capcp=is_capcp,
+                    capcp_tone=payload.get("capcp_tone", "pelmorex"),
+                    capcp_prefix=payload.get("capcp_prefix", ""),
+                    capcp_suffix=payload.get("capcp_suffix", "")
+                )
+                ALERT_HISTORY.append({"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "header": "CAP-CP Alert" if is_capcp else header_str, "mode": "CAP-CP NAAD" if is_capcp else f"WEB TTS ({voice_engine})", "file": file_name})
                 
-                card_paths = generate_alert_card(translated_text=full_translation, additional_text=add_text)
+                card_paths = generate_alert_card(translated_text=full_translation, additional_text=add_text, is_capcp=is_capcp)
                 if card_paths: launch_mpv_display(card_paths)
                 
-                threading.Thread(target=dispatch_alert_json, args=(header_str, add_text, True)).start()
-                threading.Thread(target=dispatch_discord_webhook, args=(header_str, add_text, compiled_wav)).start()
+                if not is_capcp:
+                    threading.Thread(target=dispatch_alert_json, args=(header_str, add_text, True)).start()
+                    threading.Thread(target=dispatch_discord_webhook, args=(header_str, add_text, compiled_wav)).start()
 
                 time.sleep(pause_ms / 1000.0)
                 if os.path.exists(compiled_wav): stream_and_play_alert_wav(compiled_wav)
                 stop_mpv_display()
-                notify_tv_alert_done(header_str)
+                if not is_capcp: notify_tv_alert_done(header_str)
 
         except Exception as e: logger.error(f"[QUEUE WORKER ERROR] Alert playback crashed: {e}")
         finally:
@@ -1382,19 +1787,202 @@ def automated_test_worker():
         now = datetime.now()
         config = load_taendec_config()
         sched_cfg = config.get("rwt_rmt_scheduler", {})
+        default_v = config.get("general", {}).get("default_voice_engine", "vtpaul")
         t_day = int(sched_cfg.get("rwt_exact_day", "-1"))
         t_time = sched_cfg.get("rwt_exact_time", "")
         rwt_fips = sched_cfg.get("rwt_fips", "027145")
         if now.weekday() == t_day and now.strftime("%H:%M") == t_time and time.time() - last_rwt_run > 3600:
             last_rwt_run = time.time()
-            ALERT_QUEUE.put({"type": "WEB", "originator": "EAS", "eventCode": "RWT", "duration": "0030", "fipsCodes": rwt_fips, "additionalText": sched_cfg.get("rwt_text", ""), "voice_wav_path": sched_cfg.get("rwt_voice", ""), "skip_translation_in_tts": False, "hasAudio": bool(sched_cfg.get("rwt_voice", ""))})
+            ALERT_QUEUE.put({"type": "WEB", "originator": "EAS", "eventCode": "RWT", "duration": "0030", "fipsCodes": rwt_fips, "voiceEngine": default_v, "additionalText": sched_cfg.get("rwt_text", ""), "voice_wav_path": sched_cfg.get("rwt_voice", ""), "skip_translation_in_tts": False, "hasAudio": bool(sched_cfg.get("rwt_voice", ""))})
         rmt_week = int(sched_cfg.get("rmt_week", "-1"))
         rmt_day = int(sched_cfg.get("rmt_day", "-1"))
         rmt_time = sched_cfg.get("rmt_time", "")
         rmt_fips = sched_cfg.get("rmt_fips", "027145")
         if ((now.day - 1) // 7 + 1) == rmt_week and now.weekday() == rmt_day and now.strftime("%H:%M") == rmt_time and time.time() - last_rmt_run > 3600:
             last_rmt_run = time.time()
-            ALERT_QUEUE.put({"type": "WEB", "originator": "EAS", "eventCode": "RMT", "duration": "0030", "fipsCodes": rmt_fips, "additionalText": sched_cfg.get("rmt_text", ""), "voice_wav_path": sched_cfg.get("rmt_voice", ""), "skip_translation_in_tts": False, "hasAudio": bool(sched_cfg.get("rmt_voice", ""))})
+            ALERT_QUEUE.put({"type": "WEB", "originator": "EAS", "eventCode": "RMT", "duration": "0030", "fipsCodes": rmt_fips, "voiceEngine": default_v, "additionalText": sched_cfg.get("rmt_text", ""), "voice_wav_path": sched_cfg.get("rmt_voice", ""), "skip_translation_in_tts": False, "hasAudio": bool(sched_cfg.get("rmt_voice", ""))})
+
+def wea_logger_worker():
+    if not requests: return
+    seen_ids = set()
+    ns = {'cap': 'urn:oasis:names:tc:emergency:cap:1.2', 'ns1': 'http://gov.fema.ipaws.services/feed'}
+    
+    while True:
+        time.sleep(60)
+        try:
+            config = load_taendec_config()
+            wea_cfg = config.get("wea_logger", {})
+            if not wea_cfg.get("enabled", False): continue
+            
+            discord_url = wea_cfg.get("discord_webhook", "")
+            gotify_cfg = config.get("outputs", {}).get("gotify", {})
+            gotify_url = f"{gotify_cfg.get('url', '').rstrip('/')}/message?token={gotify_cfg.get('token', '')}" if gotify_cfg.get("enabled") and gotify_cfg.get("url") and gotify_cfg.get("token") else "" 
+            wea_url = "https://apps.fema.gov/IPAWSOPEN_EAS_SERVICE/rest/PublicWEA/recent/2012-08-21T11:40:43Z"
+            
+            headers = {'User-Agent': 'TaENDEC Master System (admin@taendec.local)', 'Accept': 'application/xml, text/xml'}
+            resp = requests.get(wea_url, headers=headers, timeout=15)
+            if resp.status_code != 200: continue
+            
+            root = ET.fromstring(resp.content)
+            alerts = root.findall('.//cap:alert', ns)
+            if not alerts and root.tag.endswith('alert'): alerts = [root]
+            
+            for alert in alerts:
+                alert_id = alert.findtext('cap:identifier', namespaces=ns)
+                if not alert_id or alert_id in seen_ids: continue
+                seen_ids.add(alert_id)
+                
+                info = alert.find('cap:info', ns)
+                if info is None: continue
+                
+                headline = info.findtext('cap:headline', default='WEA Alert', namespaces=ns)
+                sent = alert.findtext('cap:sent', default='Unknown', namespaces=ns)
+                expires = info.findtext('cap:expires', default='Unknown', namespaces=ns)
+                sender = info.findtext('cap:senderName', namespaces=ns) or alert.findtext('cap:sender', default='Unknown', namespaces=ns)
+                
+                same_code = "UNKNOWN"
+                for ec in info.findall('cap:eventCode', ns):
+                    if ec.findtext('cap:valueName', namespaces=ns) == 'SAME':
+                        same_code = ec.findtext('cap:value', namespaces=ns)
+                        
+                cmam_text, cmam_longtext, wea_handling = "N/A", "N/A", "N/A"
+                for param in info.findall('cap:parameter', ns):
+                    vname = param.findtext('cap:valueName', namespaces=ns)
+                    val = param.findtext('cap:value', namespaces=ns)
+                    if vname == 'CMAMtext': cmam_text = val
+                    elif vname == 'CMAMlongtext': cmam_longtext = val
+                    elif vname == 'WEAHandling': wea_handling = val
+                
+                if discord_url:
+                    embed = {
+                        "title": f"{headline} ({same_code})",
+                        "color": 16711680,
+                        "fields": [
+                            {"name": "WEA Handling", "value": wea_handling, "inline": True},
+                            {"name": "Sender", "value": sender, "inline": True},
+                            {"name": "Start Time", "value": sent, "inline": True},
+                            {"name": "End Time", "value": expires, "inline": True},
+                            {"name": "CMAMtext (90-char)", "value": cmam_text, "inline": False},
+                            {"name": "CMAMlongtext (360-char)", "value": cmam_longtext, "inline": False}
+                        ],
+                        "footer": {"text": "TaENDEC WEA Logger"}
+                    }
+                    requests.post(discord_url, json={"embeds": [embed]}, timeout=10)
+                
+                if gotify_url:
+                    requests.post(gotify_url, json={"title": wea_handling, "message": cmam_longtext, "priority": 8}, timeout=10)
+                    
+                logger.info(f"[WEA Logger] Processed and dispatched: {headline} ({same_code})")
+        except Exception as e:
+            logger.error(f"[WEA Logger] Error: {e}")
+
+def capcp_naad_worker():
+    seen_ids = set()
+    ns = {'cap': 'urn:oasis:names:tc:emergency:cap:1.2'}
+    
+    while True:
+        try:
+            config = load_taendec_config()
+            capcp_cfg = config.get("capcp", {})
+            if not capcp_cfg.get("enabled", False):
+                time.sleep(60)
+                continue
+                
+            pref_lang = capcp_cfg.get("lang", "en-CA")
+            gotify_cfg = config.get("outputs", {}).get("gotify", {})
+            gotify_url = f"{gotify_cfg.get('url', '').rstrip('/')}/message?token={gotify_cfg.get('token', '')}" if gotify_cfg.get("enabled") and gotify_cfg.get("url") and gotify_cfg.get("token") else ""
+            
+            host = "streaming1.naad-adna.pelmorex.com"
+            port = 8080
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(90.0) 
+            s.connect((host, port))
+            logger.info("[CAP-CP] Connected to NAAD TCP stream.")
+            
+            buffer = ""
+            while True:
+                chunk = s.recv(4096)
+                if not chunk: break
+                buffer += chunk.decode('utf-8', errors='ignore')
+                
+                while "<Heartbeat" in buffer and "</Heartbeat>" in buffer:
+                    buffer = buffer[buffer.find("</Heartbeat>") + 12:]
+                    
+                while "<alert" in buffer and "</alert>" in buffer:
+                    start_idx = buffer.find("<alert")
+                    end_idx = buffer.find("</alert>") + 8
+                    
+                    if start_idx != -1 and start_idx < end_idx:
+                        raw_xml = buffer[start_idx:end_idx]
+                        buffer = buffer[end_idx:]
+                        
+                        try:
+                            alert = ET.fromstring(raw_xml)
+                            alert_id = alert.findtext('cap:identifier', namespaces=ns)
+                            
+                            if alert_id and alert_id not in seen_ids:
+                                seen_ids.add(alert_id)
+                                
+                                target_info = None
+                                for info in alert.findall('cap:info', ns):
+                                    if info.findtext('cap:language', namespaces=ns) == pref_lang:
+                                        target_info = info
+                                        break
+                                if target_info is None:
+                                    target_info = alert.find('cap:info', ns)
+                                    
+                                if target_info is not None:
+                                    literal_event = target_info.findtext('cap:event', default='CAP-CP Alert', namespaces=ns)
+                                    headline = target_info.findtext('cap:headline', default='', namespaces=ns)
+                                    desc = target_info.findtext('cap:description', default='', namespaces=ns)
+                                    inst = target_info.findtext('cap:instruction', default='', namespaces=ns)
+                                    
+                                    audio_path = ""
+                                    resource = target_info.find('cap:resource', ns)
+                                    if resource is not None:
+                                        deref = resource.findtext('cap:derefUri', namespaces=ns)
+                                        if deref and "base64," in deref:
+                                            try:
+                                                b64_data = deref.split("base64,")[1]
+                                                audio_path = os.path.join(PERSISTENT_AUDIO_DIR, f"capcp_{alert_id.replace(':', '_')}.wav")
+                                                with open(audio_path, "wb") as wf:
+                                                    wf.write(base64.b64decode(b64_data))
+                                            except Exception as e:
+                                                logger.error(f"[CAP-CP] Base64 Decode Error: {e}")
+                                    
+                                    nl = chr(10)
+                                    msg_body = headline + nl + nl + desc + nl + inst
+                                    if gotify_url and requests:
+                                        try: requests.post(gotify_url, json={"title": literal_event, "message": msg_body, "priority": 8}, timeout=10)
+                                        except: pass
+                                    
+                                    add_text = "EMERGENCY ALERT / ALERTE D'URGENCE" + nl + nl + headline + nl + nl + desc + nl + nl + inst
+                                    internal_payload = {
+                                        "type": "WEB",
+                                        "originator": "CIV", 
+                                        "eventCode": "CEM", 
+                                        "duration": "0100", 
+                                        "fipsCodes": "000000",
+                                        "additionalText": add_text,
+                                        "hasAudio": bool(audio_path),
+                                        "voice_wav_path": audio_path,
+                                        "skip_translation_in_tts": True,
+                                        "is_capcp": True,
+                                        "capcp_tone": capcp_cfg.get("tone", "pelmorex"),
+                                        "capcp_prefix": capcp_cfg.get("prefix", ""),
+                                        "capcp_suffix": capcp_cfg.get("suffix", "")
+                                    }
+                                    
+                                    ALERT_QUEUE.put(internal_payload)
+                                    logger.info(f"[CAP-CP] Local dispatch queued for: {literal_event}")
+                        except ET.ParseError:
+                            logger.error("[CAP-CP] Stream XML Parse Error.")
+                    else:
+                        buffer = ""
+                        break
+        except Exception as e:
+            logger.warning(f"[CAP-CP] Stream disconnect: {e}. Retrying in 15s...")
+            time.sleep(15)
 
 class APIHandler(BaseHTTPRequestHandler):
     def end_headers(self):
@@ -1520,11 +2108,14 @@ if __name__ == "__main__":
     logger.info("Starting TaENDEC Master Daemon...")
     
     threading.Thread(target=background_audio_worker, daemon=True).start()
+    threading.Thread(target=gapless_icecast_worker, daemon=True).start()
     threading.Thread(target=alert_playback_worker, daemon=True).start()
     threading.Thread(target=dynamic_monitor_manager, daemon=True).start()
     threading.Thread(target=schedule_worker, daemon=True).start()
     threading.Thread(target=automated_test_worker, daemon=True).start()
     threading.Thread(target=recording_timeout_worker, daemon=True).start()
+    threading.Thread(target=wea_logger_worker, daemon=True).start()
+    threading.Thread(target=capcp_naad_worker, daemon=True).start()
     
     launch_idle_screen()
     
