@@ -132,7 +132,8 @@ cat << 'EOF' | sudo tee "$APP_DIR/taendec_config.json" > /dev/null
   },
   "wea_logger": {
     "enabled": false,
-    "discord_webhook": ""
+    "discord_webhook": "",
+    "discord_role_id": ""
   },
   "capcp": {
     "enabled": false,
@@ -373,6 +374,8 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
         <label style="width:auto;"><input type="checkbox" id="cfg_wea_enabled"> Enable PublicWEA Polling</label><br><br>
         <label>WEA Discord Webhook URL:</label><br>
         <input type="text" id="cfg_wea_webhook" placeholder="https://discord.com/api/webhooks/..." style="width: 95%;"><br><br>
+        <label>Discord Role ID to Ping (Optional):</label><br>
+        <input type="text" id="cfg_wea_role_id" placeholder="e.g. 123456789012345678" style="width: 95%;"><br><br>
         <small style="color:#888;">Polls the official FEMA IPAWS PublicWEA REST feed every 60 seconds and routes alerts to Discord & Gotify.</small>
       </div>
 
@@ -662,6 +665,7 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
       if(currentConfig.wea_logger) {
           document.getElementById("cfg_wea_enabled").checked = currentConfig.wea_logger.enabled || false;
           document.getElementById("cfg_wea_webhook").value = currentConfig.wea_logger.discord_webhook || "";
+          document.getElementById("cfg_wea_role_id").value = currentConfig.wea_logger.discord_role_id || "";
       }
 
       if(currentConfig.icecast) {
@@ -774,7 +778,8 @@ cat << 'EOF' | sudo tee /var/www/html/index.html > /dev/null
 
     currentConfig.wea_logger = {
         enabled: document.getElementById("cfg_wea_enabled").checked,
-        discord_webhook: document.getElementById("cfg_wea_webhook").value.trim()
+        discord_webhook: document.getElementById("cfg_wea_webhook").value.trim(),
+        discord_role_id: document.getElementById("cfg_wea_role_id").value.trim()
     };
 
     currentConfig.icecast = {
@@ -1815,6 +1820,8 @@ def wea_logger_worker():
             if not wea_cfg.get("enabled", False): continue
             
             discord_url = wea_cfg.get("discord_webhook", "")
+            raw_role_id = str(wea_cfg.get("discord_role_id", "")).strip()
+            clean_role_id = re.sub(r"[^0-9]", "", raw_role_id)
             gotify_cfg = config.get("outputs", {}).get("gotify", {})
             gotify_url = f"{gotify_cfg.get('url', '').rstrip('/')}/message?token={gotify_cfg.get('token', '')}" if gotify_cfg.get("enabled") and gotify_cfg.get("url") and gotify_cfg.get("token") else "" 
             wea_url = "https://apps.fema.gov/IPAWSOPEN_EAS_SERVICE/rest/PublicWEA/recent/2012-08-21T11:40:43Z"
@@ -1867,7 +1874,11 @@ def wea_logger_worker():
                         ],
                         "footer": {"text": "TaENDEC WEA Logger"}
                     }
-                    requests.post(discord_url, json={"embeds": [embed]}, timeout=10)
+                    webhook_payload = {"embeds": [embed]}
+                    if clean_role_id:
+                        webhook_payload["content"] = f"<@&{clean_role_id}>"
+                        webhook_payload["allowed_mentions"] = {"roles": [clean_role_id]}
+                    requests.post(discord_url, json=webhook_payload, timeout=10)
                 
                 if gotify_url:
                     requests.post(gotify_url, json={"title": wea_handling, "message": cmam_longtext, "priority": 8}, timeout=10)
