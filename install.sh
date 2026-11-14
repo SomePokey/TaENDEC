@@ -41,7 +41,7 @@ sudo mkdir -p "$APP_DIR/logs"
 sudo mkdir -p /var/www/html
 sudo mkdir -p /var/lib/eas_alerts/audio_archive
 sudo mkdir -p /var/lib/eas_alerts/uploads
-sudo mkdir -p /opt/tts_engines
+sudo mkdir -p "$TTS_DIR"
 
 # --- Download Offline Broadcast TTS Engines ---
 echo "Downloading offline broadcast TTS engines (vtpaul, cep6, dectalk, loqdave, spfy)..."
