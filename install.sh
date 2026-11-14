@@ -22,6 +22,7 @@ fi
 APP_USER="$USER"
 APP_DIR="/home/$APP_USER"
 REPO_DIR="$APP_DIR/TaENDEC"
+TTS_DIR="$APP_DIR/tts_engines"
 
 if [ ! -d "$REPO_DIR" ]; then
     echo "Error: Repository directory $REPO_DIR not found. Make sure you cloned TaENDEC into $APP_DIR/TaENDEC."
@@ -40,7 +41,7 @@ sudo mkdir -p "$APP_DIR/logs"
 sudo mkdir -p /var/www/html
 sudo mkdir -p /var/lib/eas_alerts/audio_archive
 sudo mkdir -p /var/lib/eas_alerts/uploads
-sudo mkdir -p /opt/taendec_tts
+sudo mkdir -p /opt/tts_engines
 
 # --- Download Offline Broadcast TTS Engines ---
 echo "Downloading offline broadcast TTS engines (vtpaul, cep6, dectalk, loqdave, spfy)..."
@@ -51,19 +52,21 @@ else
     SUFFIX="x86"
 fi
 
-sudo wget -qO /opt/taendec_tts/cep6 "https://github.com/wagwan-piffting-blud/cep6-rs/releases/download/2026.10.10/cep6-linux-${SUFFIX}"
-sudo wget -qO /opt/taendec_tts/vtpaul "https://github.com/wagwan-piffting-blud/vtns-rs/releases/download/2026.10.27/vtpaul-linux-${SUFFIX}"
-sudo wget -qO /opt/taendec_tts/dectalk "https://github.com/wagwan-piffting-blud/dectalk-rs/releases/download/2026.10.09/dectalk-linux-${SUFFIX}"
-sudo wget -qO /opt/taendec_tts/loqdave "https://github.com/wagwan-piffting-blud/ENDEC_Dave/releases/download/2026.10.06/loqdave-linux-${SUFFIX}"
-sudo wget -qO /opt/taendec_tts/spfy "https://github.com/wagwan-piffting-blud/spfy-rs/releases/latest/download/spfy-linux-${SUFFIX}"
+wget -qO "$TTS_DIR/cep6" "https://github.com/wagwan-piffting-blud/cep6-rs/releases/download/2026.10.10/cep6-linux-${SUFFIX}"
+wget -qO "$TTS_DIR/vtpaul" "https://github.com/wagwan-piffting-blud/vtns-rs/releases/download/2026.10.27/vtpaul-linux-${SUFFIX}"
+wget -qO "$TTS_DIR/dectalk" "https://github.com/wagwan-piffting-blud/dectalk-rs/releases/download/2026.10.09/dectalk-linux-${SUFFIX}"
+wget -qO "$TTS_DIR/loqdave" "https://github.com/wagwan-piffting-blud/ENDEC_Dave/releases/download/2026.10.06/loqdave-linux-${SUFFIX}"
+wget -qO "$TTS_DIR/spfy" "https://github.com/wagwan-piffting-blud/spfy-rs/releases/latest/download/spfy-linux-${SUFFIX}"
 
-sudo chmod +x /opt/taendec_tts/cep6 /opt/taendec_tts/vtpaul /opt/taendec_tts/dectalk /opt/taendec_tts/loqdave /opt/taendec_tts/spfy
+chmod +x "$TTS_DIR/cep6" "$TTS_DIR/vtpaul" "$TTS_DIR/dectalk" "$TTS_DIR/loqdave" "$TTS_DIR/spfy"
 
 echo "Downloading and extracting VoiceText voice data..."
-sudo wget -qO /tmp/VoiceText.zip "https://uploads.wagspuzzle.space/VoiceText.zip"
-sudo unzip -q -o /tmp/VoiceText.zip -d /opt/taendec_tts/
-sudo rm -f /tmp/VoiceText.zip
-sudo chown -R "$APP_USER:$APP_USER" /opt/taendec_tts
+wget -qO /tmp/VoiceText.zip "https://uploads.wagspuzzle.space/VoiceText.zip"
+unzip -q -o /tmp/VoiceText.zip -d "$TTS_DIR/"
+rm -f /tmp/VoiceText.zip
+chown -R "$APP_USER:$APP_USER" "$TTS_DIR"
+
+
 
 # --- Interactive ALSA Prompt ---
 echo ""
