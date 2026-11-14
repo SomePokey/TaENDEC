@@ -1,0 +1,1036 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+<script>
+window.onerror = function(msg, url, line) {
+    alert('Javascript Error:\n' + msg + '\nLine: ' + line);
+};
+</script>
+<meta charset="UTF-8">
+<title>TaENDEC Web Controller</title>
+<style>
+  body { background-color: #0d0d0d; color: #e0e0e0; font-family: monospace; padding: 20px; margin: 0; }
+  h3 { color: #ff6600; border-bottom: 2px solid #333; padding-bottom: 10px; margin-top: 0; }
+  .nav-tabs { border-bottom: 2px solid #333; margin-bottom: 20px; }
+  .tab-btn { background: #1a1a1a; color: #ccc; border: 1px solid #333; padding: 10px 20px; cursor: pointer; font-family: inherit; font-size: 1em; }
+  .tab-btn.active { background: #ff6600; color: #000; font-weight: bold; }
+  .form-group { margin-bottom: 15px; }
+  label { display: inline-block; width: 250px; vertical-align: top; }
+  select, input[type="text"], input[type="password"], input[type="number"], input[type="time"], textarea { background: #1a1a1a; color: #fff; border: 1px solid #444; padding: 6px; font-family: inherit; width: calc(100% - 270px); max-width: 500px; box-sizing: border-box; }
+  input[type="checkbox"] { width: auto; margin-right: 8px; }
+  .btn-orange { background-color: #ff6600; color: #000; font-weight: bold; border: none; padding: 8px 16px; cursor: pointer; font-family: inherit; }
+  .btn-orange:hover { background-color: #ff8533; }
+  .btn-sm { padding: 4px 8px; font-size: 0.85em; }
+  .btn-red { background-color: #cc0000; color: #fff; }
+  table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+  th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+  th { background: #1a1a1a; }
+  .hidden { display: none; }
+  
+  .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .settings-panel { background: #151515; padding: 15px; border: 1px solid #333; }
+  .settings-panel h4 { margin-top: 0; color: #ff6600; border-bottom: 1px dashed #444; padding-bottom: 8px; margin-bottom: 15px; }
+  .settings-panel label { width: 100%; display: block; margin-bottom: 4px; color: #aaa; font-size: 0.9em; }
+  .settings-panel input[type="text"], .settings-panel select, .settings-panel textarea, .settings-panel input[type="password"] { width: 100%; margin-bottom: 12px; max-width: 100%; }
+  .settings-panel .check-label { display: flex; align-items: center; width: auto; margin-bottom: 10px; color: #e0e0e0; font-size: 0.95em; }
+  .settings-panel .check-label input { margin-bottom: 0; }
+  .upload-group { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .upload-group input[type="text"] { margin-bottom: 0; flex: 1; min-width: 0; }
+  pre { background: #111; padding: 10px; border: 1px solid #333; color: #00ff66; overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<div id="loadingUI" style="text-align:center; margin-top: 100px; font-size: 1.2em;">Connecting to TaENDEC Backend...</div>
+
+<div id="loginModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:9999; align-items:center; justify-content:center;">
+  <div style="background:#151515; padding:30px; border:1px solid #ff6600; width:300px;">
+    <h3 style="color:#ff6600; margin-top:0;">TaENDEC Login</h3>
+    <label style="width:100%;">Username:</label>
+    <input type="text" id="loginUser" style="margin-bottom:10px; width:100%;">
+    <label style="width:100%;">Password:</label>
+    <input type="password" id="loginPass" style="margin-bottom:20px; width:100%;" onkeydown="if(event.key === 'Enter') doLogin();">
+    <button class="btn-orange" style="width:100%;" onclick="doLogin()">Authenticate</button>
+  </div>
+</div>
+
+<div id="mainUI" style="display:none;">
+  <div class="nav-tabs">
+    <button class="tab-btn active" onclick="switchTab('send')">Transmit Alert</button>
+    <button class="tab-btn" onclick="switchTab('schedule')">Schedule Alert</button>
+    <button class="tab-btn" onclick="switchTab('history'); fetchHistory();">Archive</button>
+    <button class="tab-btn" onclick="switchTab('settings'); loadSettings();">System Settings</button>
+    <button class="tab-btn" onclick="switchTab('docs')">API Documentation</button>
+  </div>
+
+  <div id="tab-encoder">
+    <h3>Encode & Transmit</h3>
+    <form id="easForm" onsubmit="submitAlert(event)">
+      <div class="form-group">
+        <label>Select Originator:</label>
+        <select id="originator">
+          <option value="EAS">Emergency Alert System</option>
+          <option value="CIV">Civil Authorities</option>
+          <option value="WXR">National Weather Service</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Select EAS Event Type:</label>
+        <select id="eventType">
+          <option value="ADR">Administrative Message (ADR)</option><option value="AVA">Avalanche Watch (AVA)</option><option value="AVW">Avalanche Warning (AVW)</option><option value="BHW">Biological Hazard Warning (BHW)</option><option value="BLU">Blue Alert (BLU)</option><option value="BWW">Boil Water Warning (BWW)</option><option value="BZW">Blizzard Warning (BZW)</option><option value="CAE">Child Abduction Emergency (CAE)</option><option value="CDA">Civil Danger Watch (CDA)</option><option value="CDW">Civil Danger Warning (CDW)</option><option value="CEM">Civil Emergency Message (CEM)</option><option value="CFA">Coastal Flood Watch (CFA)</option><option value="CFW">Coastal Flood Warning (CFW)</option><option value="CHW">Chemical Hazard Warning (CHW)</option><option value="CWW">Contaminated Water Warning (CWW)</option><option value="DBA">Dam Watch (DBA)</option><option value="DBW">Dam Break Warning (DBW)</option><option value="DEW">Contagious Disease Warning (DEW)</option><option value="DMO">Demonstration Message (DMO)</option><option value="DSW">Dust Storm Warning (DSW)</option><option value="EAN">National Emergency Message (EAN)</option><option value="EAT">Emergency Action Termination (EAT)</option><option value="EQW">Earthquake Warning (EQW)</option><option value="EVA">Evacuation Watch (EVA)</option><option value="EVI">Notice of Immediate Evacuation (EVI)</option><option value="EWW">Extreme Wind Warning (EWW)</option><option value="FCW">Food Contamination Warning (FCW)</option><option value="FFA">Flash Flood Watch (FFA)</option><option value="FFS">Flash Flood Statement (FFS)</option><option value="FFW">Flash Flood Warning (FFW)</option><option value="FLA">Flood Watch (FLA)</option><option value="FLS">Flood Statement (FLS)</option><option value="FLW">Flood Warning (FLW)</option><option value="FRW">Fire Warning (FRW)</option><option value="FSW">Flash Freeze Warning (FSW)</option><option value="FZW">Freeze Warning (FZW)</option><option value="HLS">Hurricane Local Statement (HLS)</option><option value="HMW">Hazardous Materials Warning (HMW)</option><option value="HUA">Hurricane Watch (HUA)</option><option value="HUW">Hurricane Warning (HUW)</option><option value="HWA">High Wind Watch (HWA)</option><option value="HWW">High Wind Warning (HWW)</option><option value="IBW">Iceberg Warning (IBW)</option><option value="IFW">Industrial Fire Warning (IFW)</option><option value="LAE">Local Area Emergency (LAE)</option><option value="LEW">Law Enforcement Warning (LEW)</option><option value="LSW">Landslide Warning (LSW)</option><option value="MEP">Notice of a Missing/Endangered Person (MEP)</option><option value="NAT">National Audible Test (NAT)</option><option value="NIC">National Information Center (NIC)</option><option value="NMN">Network Notification Message (NMN)</option><option value="NPM">Nuclear Power Plant Test (NPM)</option><option value="NPT">National Test of the Emergency Alert System (NPT)</option><option value="NST">National Silent Test (NST)</option><option value="NUW">Nuclear Power Warning (NUW)</option><option value="POS">Power Outage Statement (POS)</option><option value="RFW">Red Flag Warning (RFW)</option><option value="RHW">Radiological Hazard Warning (RHW)</option><option value="RMT">Required Monthly Test (RMT)</option><option value="RWT">Required Weekly Test (RWT)</option><option value="SCS">School Closure Statement (SCS)</option><option value="SMW">Special Marine Warning (SMW)</option><option value="SPS">Special Weather Statement (SPS)</option><option value="SPW">Shelter In Place Warning (SPW)</option><option value="SQW">Snow Squall Warning (SQW)</option><option value="SSA">Storm Surge Watch (SSA)</option><option value="SSW">Storm Surge Warning (SSW)</option><option value="SVA">Severe Thunderstorm Watch (SVA)</option><option value="SVR">Severe Thunderstorm Warning (SVR)</option><option value="SVS">Severe Weather Statement (SVS)</option><option value="TOA">Tornado Watch (TOA)</option><option value="TOE">911 Telephone Outage Emergency (TOE)</option><option value="TOR">Tornado Warning (TOR)</option><option value="TRA">Tropical Storm Watch (TRA)</option><option value="TRW">Tropical Storm Warning (TRW)</option><option value="TSA">Tsunami Watch (TSA)</option><option value="TSW">Tsunami Warning (TSW)</option><option value="VOW">Volcano Warning (VOW)</option><option value="WFA">Wildfire Watch (WFA)</option><option value="WFW">Wildfire Warning (WFW)</option><option value="WSA">Winter Storm Watch (WSA)</option><option value="WSW">Winter Storm Warning (WSW)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Effective Duration:</label>
+        <span style="display: inline-block; width: calc(100% - 270px); max-width: 500px;">
+          Hr: <select id="durHr" style="width: 70px;"><option value="00">00</option><option value="01">01</option><option value="02">02</option><option value="03">03</option><option value="04">04</option><option value="05">05</option><option value="06">06</option><option value="07">07</option><option value="08">08</option><option value="09">09</option><option value="10">10</option><option value="11">11</option><option value="12">12</option><option value="13">13</option><option value="14">14</option><option value="15">15</option><option value="16">16</option><option value="17">17</option><option value="18">18</option><option value="19">19</option><option value="20">20</option><option value="21">21</option><option value="22">22</option><option value="23">23</option><option value="24">24</option></select>
+          Min: <select id="durMin" style="width: 70px;"><option value="00">00</option><option value="15">15</option><option value="30" selected>30</option><option value="45">45</option></select>
+        </span>
+      </div>
+      <div class="form-group hidden" id="scheduleTimeGroup">
+        <label>Start Time (ISO):</label>
+        <input type="datetime-local" id="startTime">
+      </div>
+      <div class="section-divider"></div>
+      <div class="form-group">
+        <label>FIPS Code Search:</label>
+        <span style="display: inline-block; width: calc(100% - 270px); max-width: 500px;">
+          <input type="text" list="fipsDataList" id="fipsSearch" placeholder="Type county name or code..." style="width: 250px;">
+          <datalist id="fipsDataList"></datalist>
+          <button type="button" class="btn-orange btn-sm" onclick="addSelectedFips()">Add FIPS</button>
+        </span>
+      </div>
+      <div class="form-group">
+        <label>Selected FIPS Codes:</label>
+        <input type="text" id="manualFips" placeholder="e.g. 027145-027053">
+      </div>
+      <div class="section-divider"></div>
+      <div class="form-group">
+        <label>Custom Voice Audio (Optional):</label>
+        <span style="display: inline-block; width: calc(100% - 270px); max-width: 500px;">
+          <div class="upload-group" style="margin-top: 0; margin-bottom: 0;">
+            <input type="text" id="voice_wav_path" placeholder="Overrides TTS if uploaded..." readonly style="width: 200px;">
+            <input type="file" id="voiceUploadFile" accept="audio/*" style="width: 150px;">
+            <button type="button" class="btn-orange btn-sm" onclick="uploadFile('voiceUploadFile', 'voice_wav_path')">Upload</button>
+          </div>
+        </span>
+      </div>
+      <div class="form-group">
+        <label>Visual/TTS Text:</label>
+        <textarea id="additionalText" rows="4" placeholder="Supplemental message..."></textarea>
+      </div>
+      <div class="form-group">
+        <label></label>
+        <span style="display: inline-block; width: calc(100% - 270px); max-width: 500px;">
+          <label class="check-label" style="width: auto;"><input type="checkbox" id="skip_translation"> Skip automatic header translation in TTS</label>
+        </span>
+      </div>
+      <button type="submit" id="submitBtn" class="btn-orange">Transmit Alert Live</button>
+    </form>
+  </div>
+
+  <div id="tab-settings" class="hidden">
+    <h3>TaENDEC Master Configuration</h3>
+    <div class="settings-grid">
+      
+      <!-- Security & Auth -->
+      <div class="settings-panel">
+        <h4>Security & Authentication</h4>
+        <label class="check-label"><input type="checkbox" id="cfg_auth_enable"> Require Web UI Login</label>
+        <label>Admin Username:</label> <input type="text" id="cfg_auth_user">
+        <label>Admin Password:</label> <input type="password" id="cfg_auth_pass" placeholder="(Unchanged)">
+      </div>
+
+      <!-- TTS & General Audio -->
+      <div class="settings-panel">
+        <h4>TTS Engine & Voices</h4>
+        <label>Global TTS Engine:</label>
+        <select id="cfg_tts_engine" onchange="updateVoiceList()">
+          <option value="speechify">Speechify (Local)</option>
+          <option value="voicetext">VoiceText (Local NWS)</option>
+          <option value="cepstral">Cepstral (Local)</option>
+          <option value="dectalk">DECtalk (Local)</option>
+          <option value="loquendo">Loquendo Dave (Local)</option>
+          <option value="espeak">eSpeak NG (Local)</option></select>
+        <label>TTS Voice:</label>
+        <select id="cfg_speechify_voice"></select>
+    <div id="cepstral_upload_box" style="margin-top: 15px; padding: 15px; border: 1px solid #444; border-radius: 5px; background: #222;">
+        <h4 style="margin-top: 0;">Upload New Cepstral Voice</h4>
+        <input type="text" id="new_cepstral_name" placeholder="Voice Name (e.g. David)" style="margin-bottom: 10px; width: 100%; box-sizing: border-box;"><br>
+        <input type="file" id="new_cepstral_zip" accept=".zip" style="margin-bottom: 10px; width: 100%;"><br>
+        <button type="button" onclick="uploadCepstral(this)" style="width: 100%;">Upload & Extract .ZIP</button>
+    </div>
+
+        <br>
+        <label class="check-label"><input type="checkbox" id="cfg_skip_sender_tts"> Skip Sender ID in spoken audio</label>
+        <label class="check-label"><input type="checkbox" id="cfg_disable_ipaws_tts"> Disable Auto-TTS for IPAWS Feed</label>
+        <label class="check-label"><input type="checkbox" id="cfg_disable_global_tts"> Disable ALL Automatic TTS globally</label>
+      </div>
+
+      <!-- General Settings -->
+      <div class="settings-panel">
+        <h4>General System Limits</h4>
+        <label>Sender ID:</label> <input type="text" id="cfg_sender_id" maxlength="8">
+        <label class="check-label"><input type="checkbox" id="cfg_overwrite_sender"> Overwrite Sender ID on incoming alerts</label>
+        <label>System Timezone:</label> <input type="text" id="cfg_timezone" placeholder="America/Chicago">
+        <label>Pre-Alert Pause (ms):</label> <input type="number" id="cfg_pause" min="0" max="7000">
+      </div>
+
+      <!-- Filters & Dedupe -->
+      <div class="settings-panel">
+        <h4>Protection & Geographic Filtering</h4>
+        <label class="check-label"><input type="checkbox" id="cfg_enforce_fips"> Enforce Geographic Filtering</label>
+        <label>Allowed States (Prefixes):</label> <input type="text" id="cfg_allowed_states" placeholder="27, 91">
+        <label>Allowed FIPS Codes:</label> <input type="text" id="cfg_allowed_fips" placeholder="e.g. 027145">
+        <label>Zone & Event Overrides (FIPS: EVT, EVT):</label> 
+        <textarea id="cfg_adv_filters" rows="2" placeholder="027145: TOR, SVR&#10;018001: HWW"></textarea>
+        <br>
+        <label class="check-label"><input type="checkbox" id="cfg_dedupe_enabled"> Enable Alert Deduplication</label>
+        <label>Dedupe Grace Period (Mins 1-7):</label> <input type="number" id="cfg_dedupe_grace" min="1" max="7">
+      </div>
+      
+      
+      <!-- CAP-CP / NAAD Integration -->
+      <div class="settings-panel">
+        <h4>CAP-CP / Alert Ready (Canada)</h4>
+        <label class="check-label"><input type="checkbox" id="cfg_capcp_enabled"> Enable NAAD TCP Stream</label>
+        
+        <label>Preferred Language:</label>
+        <select id="cfg_capcp_lang">
+            <option value="en-CA">English (en-CA)</option>
+            <option value="fr-CA">French (fr-CA)</option>
+        </select>
+        
+        <label>Tone / Header Style:</label>
+        <select id="cfg_capcp_tone">
+            <option value="pelmorex">Pelmorex Canadian Tone</option>
+            <option value="same">Standard SAME Headers</option>
+        </select>
+        
+        <label>Alert Ready Prefix Audio:</label>
+        <div class="upload-group">
+            <input type="text" id="cfg_capcp_pre" placeholder="Path to prefix .wav">
+            <input type="file" id="f_capcp_pre" accept="audio/*" style="width:75px">
+            <button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_capcp_pre', 'cfg_capcp_pre')">Up</button>
+        </div>
+        
+        <label>Alert Ready Suffix Audio:</label>
+        <div class="upload-group">
+            <input type="text" id="cfg_capcp_suf" placeholder="Path to suffix .wav">
+            <input type="file" id="f_capcp_suf" accept="audio/*" style="width:75px">
+            <button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_capcp_suf', 'cfg_capcp_suf')">Up</button>
+        </div>
+      </div>
+
+      <!-- IPAWS Monitor -->
+      <div class="settings-panel" style="grid-column: span 2;">
+        <h4>Global Alert Integrations (IPAWS & RSS)</h4>
+        <div style="display:flex; gap:20px;">
+            <div style="flex:1;">
+                <label class="check-label"><input type="checkbox" id="cfg_gwes_enabled" onchange="toggleGWES(this)"> Enable GWES Central Alert Repository</label>
+                <label class="check-label"><input type="checkbox" id="cfg_ipaws_enabled"> Enable ENDEC CAP (FEMA feed)</label>
+                <label class="check-label"><input type="checkbox" id="cfg_wea_enabled"> Enable WEA CAP (FEMA WEA feed)</label>
+            </div>
+            <div style="flex:1; border-left: 1px dashed #444; padding-left: 20px;">
+                <label class="check-label"><input type="checkbox" id="cfg_nws_rss_enabled"> Enable NWS RSS Alerts (Atom Feed)</label>
+                <p style="color:#888; font-size: 0.85em; margin: 0; margin-top: 5px;">Extracts pure payload texts with explicit NO-TTS-TRANSLATION rules automatically applied.</p>
+                <label style="margin-top: 10px;">Monitored NWS Zones (e.g. MNC145, INZ001):</label>
+                <input type="text" id="cfg_nws_rss_zones" placeholder="MNC145, INZ001">
+            </div>
+        </div>
+      </div>
+
+
+      <!-- Standalone WEA Logger -->
+      <div class="settings-panel" style="grid-column: span 2;">
+        <h4>Standalone WEA Logger Integrations</h4>
+        <label class="check-label"><input type="checkbox" id="wea_enabled"> Enable Standalone WEA Logger thread</label>
+        
+        <div style="display:flex; gap:20px; margin-top:10px;">
+            <div style="flex:1;">
+                <label>Discord Webhook URL:</label>
+                <input type="text" id="wea_discord_webhook" placeholder="https://discord.com/api/webhooks/...">
+                <label style="margin-top:10px;">Discord Role ID to Ping (Optional):</label>
+                <input type="text" id="wea_discord_role_id" placeholder="e.g. 123456789012345678">
+                
+                
+            </div>
+            <div style="flex:1;">
+                <label>Geoapify API Key (For Polygons):</label>
+                <input type="text" id="wea_geoapify_key" placeholder="AIzaSy...">
+                
+                
+            </div>
+        </div>
+      </div>
+      <!-- HTTP POST -->
+      <div class="settings-panel" style="grid-column: span 2;">
+        <h4>HTTP POST Custom Integration</h4>
+        <label class="check-label"><input type="checkbox" id="cfg_enable_http"> Enable HTTP POST Notifications</label>
+        <label>Public Base URL (For serving ${AUDIO_URL}):</label> <input type="text" id="cfg_public_base" placeholder="http://192.168.12.199:8085">
+        <label>Legacy Multicast Target (Optional):</label> <input type="text" id="cfg_tv_multicast" placeholder="224.0.0.1:36332">
+        <label style="margin-top: 10px;">Inbound Webhook Paths (comma separated):</label> <input type="text" id="cfg_inbound_webhooks" placeholder="/api/custom_alert, /api/trigger">
+        <div id="httpEndpointsContainer" style="margin-top: 15px;"></div>
+        <button type="button" class="btn-orange btn-sm" onclick="addHttpEndpoint()">+ Add HTTP Webhook</button>
+        <p style="color:#888; font-size: 0.85em; margin-top: 10px;">Variables: ${ORIGIN}, ${LORIGIN}, ${EVENT}, ${LEVENT}, ${SAMECO}, ${NAMECO}, ${DFNAMECO}, ${ETIME}, ${HETIME}, ${JJJHHMM}, ${HISSUE}, ${SENDERID}, ${HEADER}, ${TRANSTEXT}, ${ADDTEXT}, <b>${AUDIO_URL}</b></p>
+      </div>
+      
+      <!-- Prefixes & Suffixes Formatting -->
+      <div class="settings-panel" style="grid-column: span 2;">
+        <h4>Audio Prefix, Suffix & Formatting</h4>
+        <div style="display:flex; gap:20px;">
+            <div style="flex:1;">
+                <label style="color:#ff6600;">EAN Placements & Extras</label>
+                <p style="color:#888; font-size:0.8em; margin-bottom:10px; margin-top:0;">Note: Non-EAN alerts always force standard placement (Prefix before headers, Suffix after EOM).</p>
+                <label>EAN Prefix Placement:</label>
+                <select id="cfg_ap_prefix_pos"><option value="before_headers">Before Headers</option><option value="after_headers">After Headers (Before Tones)</option></select>
+                <label>EAN Suffix Placement:</label>
+                <select id="cfg_ap_suffix_pos"><option value="after_eom">After EOM Tones</option><option value="before_eom">Before EOM Tones</option></select>
+                <label>Before Alert Audio (Plays right after Tones):</label>
+                <div class="upload-group">
+                    <input type="text" id="cfg_ap_before" placeholder="Path to .wav/.mp3">
+                    <input type="file" id="f_ap_before" accept="audio/*" style="width: 80px;">
+                    <button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_ap_before', 'cfg_ap_before')">Up</button>
+                </div>
+            </div>
+            <div style="flex:2; display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <!-- EAN -->
+                <div><label>Nat. Emerg. Prefix:</label><div class="upload-group"><input type="text" id="cfg_ap_pre_ean"><input type="file" id="f_pre_ean" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_pre_ean', 'cfg_ap_pre_ean')">Up</button></div></div>
+                <div><label>Nat. Emerg. Suffix:</label><div class="upload-group"><input type="text" id="cfg_ap_suf_ean"><input type="file" id="f_suf_ean" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_suf_ean', 'cfg_ap_suf_ean')">Up</button></div></div>
+                <!-- WEATHER -->
+                <div><label>Weather Warn Prefix:</label><div class="upload-group"><input type="text" id="cfg_ap_pre_wx"><input type="file" id="f_pre_wx" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_pre_wx', 'cfg_ap_pre_wx')">Up</button></div></div>
+                <div><label>Weather Warn Suffix:</label><div class="upload-group"><input type="text" id="cfg_ap_suf_wx"><input type="file" id="f_suf_wx" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_suf_wx', 'cfg_ap_suf_wx')">Up</button></div></div>
+                <!-- CIV -->
+                <div><label>Civil Emerg Prefix:</label><div class="upload-group"><input type="text" id="cfg_ap_pre_civ"><input type="file" id="f_pre_civ" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_pre_civ', 'cfg_ap_pre_civ')">Up</button></div></div>
+                <div><label>Civil Emerg Suffix:</label><div class="upload-group"><input type="text" id="cfg_ap_suf_civ"><input type="file" id="f_suf_civ" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_suf_civ', 'cfg_ap_suf_civ')">Up</button></div></div>
+                <!-- TEST -->
+                <div><label>Test Prefix:</label><div class="upload-group"><input type="text" id="cfg_ap_pre_test"><input type="file" id="f_pre_test" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_pre_test', 'cfg_ap_pre_test')">Up</button></div></div>
+                <div><label>Test Suffix:</label><div class="upload-group"><input type="text" id="cfg_ap_suf_test"><input type="file" id="f_suf_test" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_suf_test', 'cfg_ap_suf_test')">Up</button></div></div>
+                <!-- WATCH -->
+                <div><label>Watch Prefix:</label><div class="upload-group"><input type="text" id="cfg_ap_pre_watch"><input type="file" id="f_pre_watch" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_pre_watch', 'cfg_ap_pre_watch')">Up</button></div></div>
+                <div><label>Watch Suffix:</label><div class="upload-group"><input type="text" id="cfg_ap_suf_watch"><input type="file" id="f_suf_watch" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_suf_watch', 'cfg_ap_suf_watch')">Up</button></div></div>
+                <!-- ADVISORY -->
+                <div><label>Advisory Prefix:</label><div class="upload-group"><input type="text" id="cfg_ap_pre_adv"><input type="file" id="f_pre_adv" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_pre_adv', 'cfg_ap_pre_adv')">Up</button></div></div>
+                <div><label>Advisory Suffix:</label><div class="upload-group"><input type="text" id="cfg_ap_suf_adv"><input type="file" id="f_suf_adv" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_suf_adv', 'cfg_ap_suf_adv')">Up</button></div></div>
+                <!-- GLOBAL/ALL -->
+                <div><label>Global Fallback Prefix:</label><div class="upload-group"><input type="text" id="cfg_ap_pre_all"><input type="file" id="f_pre_all" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_pre_all', 'cfg_ap_pre_all')">Up</button></div></div>
+                <div><label>Global Fallback Suffix:</label><div class="upload-group"><input type="text" id="cfg_ap_suf_all"><input type="file" id="f_suf_all" accept="audio/*" style="width:75px"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_suf_all', 'cfg_ap_suf_all')">Up</button></div></div>
+            </div>
+        </div>
+      </div>
+
+      <!-- Icecast -->
+      <div class="settings-panel">
+        <h4>Icecast Streaming Bridge</h4>
+        <label class="check-label"><input type="checkbox" id="cfg_ice_enabled"> Enable Icecast Bridge Overlay</label>
+        <label>Server Mount URL:</label> <input type="text" id="cfg_ice_server" placeholder="icecast://source:pass@host:8000/stream">
+        <label>Background Media URL (Auto-extracts audio):</label> <input type="text" id="cfg_ice_bg" placeholder="http://stream.url/audio.mp3">
+        <label>Tech Difficulties Audio (Plays if BG fails):</label>
+        <div class="upload-group">
+            <input type="text" id="cfg_ice_tech" placeholder="Path to .wav/.mp3">
+            <input type="file" id="f_ice_tech" accept="audio/*" style="width: 80px;">
+            <button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_ice_tech', 'cfg_ice_tech')">Up</button>
+        </div>
+      </div>
+
+            <!-- Icecast Stream Manager -->
+      <div class="settings-panel">
+        <h4>Icecast Stream Override</h4>
+        <p style="color:#888; font-size: 0.85em; margin: 0; margin-top: 5px;">Overrides normal programming. Reverts automatically if stream drops for 2 mins.</p>
+        <label>Override URL (YouTube supported):</label> <input type="text" id="cfg_stream_override" placeholder="https://youtube.com/watch?v=...">
+        <label>Intro Audio Clip Path:</label> 
+        <div class="upload-group">
+            <input type="text" id="cfg_stream_clip" placeholder="Path to intro clip">
+            <input type="file" id="f_stream_clip" accept="audio/*" style="width: 80px;">
+            <button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_stream_clip', 'cfg_stream_clip')">Up</button>
+        </div>
+        <label>Intro Behavior:</label> 
+        <select id="cfg_stream_mode"><option value="before">Play Before Override Starts</option><option value="duck">Duck Override & Play</option></select>
+        <br>
+        <button type="button" onclick="triggerStreamOverride(true)" style="margin-top: 10px; background: #e74c3c; color: white; border: none; padding: 6px 12px; cursor: pointer; font-weight: bold;">Engage Override</button>
+        <button type="button" onclick="triggerStreamOverride(false)" style="margin-top: 10px; background: #333; color: white; border: 1px solid #555; padding: 6px 12px; cursor: pointer;">Return to Normal</button>
+      </div>
+
+      <!-- MPV Details Channel -->
+      <div class="settings-panel">
+        <h4>Details Channel (MPV Video Screen)</h4>
+        <label>Idle Mode:</label> <select id="cfg_mpv_mode"><option value="static_screen">Static Text Screen</option><option value="media_stream">Media Stream / Video</option><option value="off">Disabled</option></select>
+        <label>Fallback/Idle Text (Use ${newpage} to split):</label> <textarea id="cfg_mpv_text" rows="3"></textarea>
+        <label>Background Media URL (if mode is Stream):</label> <input type="text" id="cfg_mpv_url">
+      </div>
+
+      <!-- Monitors -->
+      <div class="settings-panel">
+        <h4>Monitored Network Streams (HTTP/RTSP)</h4>
+        <table style="margin-bottom: 10px;">
+          <thead><tr><th style="width: 30%;">Name</th><th style="width: 55%;">Stream URL</th><th style="width: 15%;">Action</th></tr></thead>
+          <tbody id="monitorsTbody"></tbody>
+        </table>
+        <button type="button" class="btn-orange btn-sm" onclick="addMonitorRow()">+ Add Monitor</button>
+      </div>
+
+      <!-- Discord Integration -->
+      <div class="settings-panel">
+        <h4>Discord Integration & Pings</h4>
+        <label class="check-label"><input type="checkbox" id="cfg_enable_discord"> Dispatch Alerts to Discord</label>
+        <label>Webhook URL(s):</label> <input type="text" id="cfg_discord_urls">
+        <div style="display: flex; gap: 10px;">
+          <div style="flex: 1;"><label>Bot Username:</label> <input type="text" id="cfg_discord_username"></div>
+          <div style="flex: 1;"><label>Bot Avatar URL:</label> <input type="text" id="cfg_discord_avatar"></div>
+        </div>
+        <label>Ping Mention Content:</label> <input type="text" id="cfg_discord_ping" placeholder="Attention <@&112233445566778899>!">
+        <div style="display: flex; gap: 10px;">
+          <div style="flex: 1;"><label>Allowed Role IDs:</label> <input type="text" id="cfg_discord_roles" placeholder="112233445566778899"></div>
+          <div style="flex: 1;"><label>Allowed User IDs:</label> <input type="text" id="cfg_discord_users" placeholder="123456789012345678"></div>
+        </div>
+      </div>
+
+            <!-- Gotify Integration -->
+      <div class="settings-panel">
+        <h4>Gotify / Alertify Push Routing</h4>
+        <label class="check-label"><input type="checkbox" id="cfg_enable_gotify"> Enable Gotify Alerts</label>
+        <label>Server URL:</label> <input type="text" id="cfg_gotify_url" placeholder="https://gotify.example.com">
+        <label>App Token:</label> <input type="password" id="cfg_gotify_token" placeholder="A1b2C3d4E5f6G7h">
+        
+        <label style="margin-top:10px;">ADR Routing:</label> 
+        <select id="cfg_gotify_adr"><option value="Public">Public</option><option value="Severe">Severe</option><option value="Broadcast">Broadcast</option></select>
+        <label class="check-label"><input type="checkbox" id="cfg_gotify_eas_adr"> Force EAS-ADR to Broadcast (Overrides ADR Routing)</label>
+        
+        <label>Advisory Routing:</label> 
+        <select id="cfg_gotify_adv"><option value="Severe">Severe</option><option value="Public">Public</option></select>
+        
+        <label style="margin-top:10px;">ETWS Events (comma sep):</label> <input type="text" id="cfg_gotify_etws" placeholder="EVI, SPW">
+        <label>ETWSTest Events (comma sep):</label> <input type="text" id="cfg_gotify_etws_test" placeholder="RMT, RWT">
+        <label style="margin-top:10px;">Literal Title Events (comma sep):</label> <input type="text" id="cfg_gotify_literal" placeholder="NUW, CAE">
+      </div>
+
+      <!-- RWT / RMT Automated Scheduler -->
+      <div class="settings-panel" style="grid-column: span 2;">
+        <h4>RWT / RMT Automated Scheduler</h4>
+        <div style="display: flex; gap: 20px;">
+          <div style="flex: 1;">
+            <h5>RWT Settings</h5>
+            <label>Event Code:</label> <select id="cfg_rwt_event_type"><option value="RWT">Required Weekly Test (RWT)</option><option value="DMO">Demonstration Message (DMO)</option></select>
+            <label>Effective Duration (HHMM):</label> <input type="text" id="cfg_rwt_duration" placeholder="0030">
+            <label>FIPS Codes:</label> <input type="text" id="cfg_rwt_fips" placeholder="027145">
+            <label>Day of Week:</label> <select id="cfg_rwt_exact_day"><option value="0">Mon</option><option value="1">Tue</option><option value="2">Wed</option><option value="3">Thu</option><option value="4">Fri</option><option value="5">Sat</option><option value="6">Sun</option></select>
+            <label>Time of Day:</label> <input type="time" id="cfg_rwt_exact_time">
+            <label>Additional Text:</label> <textarea id="cfg_rwt_text" rows="2"></textarea>
+            <label>Voice Clip Override:</label> <div class="upload-group"><input type="text" id="cfg_rwt_voice"><input type="file" id="rwtVoiceFile" accept="audio/*" style="width: 100px;"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('rwtVoiceFile', 'cfg_rwt_voice')">Up</button></div>
+          </div>
+          <div style="flex: 1;">
+            <h5>RMT Settings</h5>
+            <label>Effective Duration (HHMM):</label> <input type="text" id="cfg_rmt_duration" placeholder="0030">
+            <label>FIPS Codes:</label> <input type="text" id="cfg_rmt_fips" placeholder="027145">
+            <label>Week of Month:</label> <select id="cfg_rmt_week"><option value="1">First</option><option value="2">Second</option><option value="3">Third</option><option value="4">Fourth</option></select>
+            <label>Day of Week:</label> <select id="cfg_rmt_day"><option value="0">Mon</option><option value="1">Tue</option><option value="2">Wed</option><option value="3">Thu</option><option value="4">Fri</option><option value="5">Sat</option><option value="6">Sun</option></select>
+            <label>Time of Day:</label> <input type="time" id="cfg_rmt_time">
+            <label>Additional Text:</label> <textarea id="cfg_rmt_text" rows="2"></textarea>
+            <label>Voice Clip Override:</label> <div class="upload-group"><input type="text" id="cfg_rmt_voice"><input type="file" id="rmtVoiceFile" accept="audio/*" style="width: 100px;"><button type="button" class="btn-orange btn-sm" onclick="uploadFile('rmtVoiceFile', 'cfg_rmt_voice')">Up</button></div>
+          </div>
+        </div>
+        <label class="check-label" style="margin-top: 15px;"><input type="checkbox" id="cfg_rwt_disable_voice"> Disable TTS completely for automated tests</label>
+      </div>
+
+    </div><br>
+    <button class="btn-orange" onclick="saveSettings()" style="width: 100%; padding: 12px; font-size: 1.1em;">Save Master Configuration</button>
+  </div>
+
+  <div id="tab-docs" class="hidden">
+    <h3>TaENDEC API Documentation</h3>
+    <p>External systems (e.g. Open Paging Server, customized ENDEC hardware, or automation scripts) can directly interact with TaENDEC using these HTTP REST endpoints on port <b>8085</b>.</p>
+    
+    <h4>1. Transmit Live Alert Immediately</h4>
+    <p><b>Endpoint:</b> <code>POST /api/transmit</code></p>
+    <pre>{
+  "originator": "CIV",            // "EAS", "CIV", "WXR", "PEP"
+  "eventCode": "NUW",             // Standard 3-letter SAME Event Code
+  "duration": "0515",             // Duration in HHMM
+  "fipsCodes": "027109-027045",    // Dash-separated 6-digit SAME county codes
+  "additionalText": "Nuclear Power Plant Warning...", // Optional visual/TTS message
+  "voice_wav_path": "",           // Optional local /var/lib/... audio path
+  "hasAudio": false,              // Set true if voice_wav_path is present
+  "skip_translation_in_tts": false
+}</pre>
+
+    <h4>2. Schedule Alert for Future Execution</h4>
+    <p><b>Endpoint:</b> <code>POST /api/schedule</code></p>
+    <pre>{
+  "startTime": "2026-11-19T11:19:00Z", // ISO 8601 Timestamp
+  "originator": "CIV",
+  "eventCode": "NUW",
+  "duration": "0515",
+  "fipsCodes": "027109-027045",
+  "additionalText": "Scheduled test..."
+}</pre>
+
+    <h4>3. Upload Custom Audio Clip</h4>
+    <p><b>Endpoint:</b> <code>POST /api/upload</code></p>
+    <pre>{
+  "filename": "alert_voice.wav",
+  "data": "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEA..." // Base64 encoded WAV/MP3
+}</pre>
+    <p><b>Returns:</b> <code>{"status": "File Uploaded", "path": "/var/lib/eas_alerts/uploads/alert_voice.wav"}</code></p>
+  </div>
+
+  <div id="tab-history" class="hidden">
+    <h3>Alert Archive</h3>
+    <table><thead><tr><th>Timestamp</th><th>Header String</th><th>Mode</th><th>Playback</th></tr></thead><tbody id="historyTableBody"></tbody></table>
+  </div>
+</div>
+
+<script>
+  const API_PORT = "8085";
+  let currentMode = "send";
+  let currentConfig = {};
+  let fipsDatabase = {};
+
+  async function apiFetch(url, options = {}) {
+    options.headers = options.headers || {};
+    options.credentials = 'include';
+    if (options.method === "POST" && !options.headers["Content-Type"]) {
+        options.headers["Content-Type"] = "application/json";
+    }
+    const res = await fetch(url, options);
+    if (res.status === 401) {
+        document.getElementById("loginModal").style.display = "flex";
+        throw new Error("401");
+    }
+    if (!res.ok) throw new Error("API Error " + res.status);
+    return res;
+  }
+
+  async function doLogin() {
+    const u = document.getElementById("loginUser").value;
+    const p = document.getElementById("loginPass").value;
+    try {
+        const res = await fetch(`http://${window.location.hostname}:${API_PORT}/api/login`, {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({username: u, password: p}), credentials: 'include'
+        });
+        if (res.ok) {
+            document.getElementById("loginModal").style.display = "none";
+            location.reload();
+        } else alert("Invalid username or password.");
+    } catch(e) { alert("Server connection failed."); }
+  }
+
+  window.onload = async () => {
+    try {
+      const res = await apiFetch(`http://${window.location.hostname}:${API_PORT}/api/fips`);
+      document.getElementById("loadingUI").style.display = "none";
+      document.getElementById("mainUI").style.display = "block";
+
+      fipsDatabase = await res.json();
+      const datalist = document.getElementById("fipsDataList");
+      for (const [code, name] of Object.entries(fipsDatabase)) {
+        const opt = document.createElement("option");
+        opt.value = `0${code}`; opt.text = `${name} (${code})`;
+        datalist.appendChild(opt);
+      }
+    } catch (e) {
+      document.getElementById("loadingUI").style.display = "none";
+      if (e.message !== "401") {
+          document.body.innerHTML = `<div style="text-align:center; margin-top: 100px; color: #ff3333;"><h2>Backend Connection Failed</h2><p>Could not connect to daemon port ${API_PORT}.</p></div>`;
+      }
+    }
+  };
+
+  function addSelectedFips() {
+    const searchBox = document.getElementById("fipsSearch");
+    const targetBox = document.getElementById("manualFips");
+    let val = searchBox.value.split(" ")[0].trim();
+    if (val.length === 6) {
+      let current = targetBox.value.trim();
+      targetBox.value = current ? `${current}-${val}` : val;
+      searchBox.value = "";
+    }
+  }
+
+  function switchTab(tab) {
+    document.getElementById("tab-encoder").classList.toggle("hidden", tab !== "send" && tab !== "schedule");
+    document.getElementById("tab-history").classList.toggle("hidden", tab !== "history");
+    document.getElementById("tab-settings").classList.toggle("hidden", tab !== "settings");
+    document.getElementById("tab-docs").classList.toggle("hidden", tab !== "docs");
+    document.getElementById("scheduleTimeGroup").classList.toggle("hidden", tab !== "schedule");
+    currentMode = tab;
+    if (tab === "send") document.getElementById("submitBtn").innerText = "Transmit Alert Live";
+    if (tab === "schedule") document.getElementById("submitBtn").innerText = "Schedule Alert";
+    document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
+    if (event && event.target) event.target.classList.add("active");
+  }
+
+  async function uploadFile(inputId, targetInputId) {
+    const fileInput = document.getElementById(inputId);
+    if (fileInput.files.length === 0) return alert("Select a file first.");
+    const file = fileInput.files[0];
+    const reader = new FileReader();
+    reader.onload = async function() {
+      const payload = { filename: file.name, data: reader.result };
+      try {
+        const res = await apiFetch(`http://${window.location.hostname}:${API_PORT}/api/upload`, { method: "POST", body: JSON.stringify(payload) });
+        const data = await res.json();
+        document.getElementById(targetInputId).value = data.path;
+        alert(data.status + ": " + data.path);
+      } catch (e) { alert("Upload failed."); }
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function addMonitorRow(name = "", url = "") {
+    const tbody = document.getElementById("monitorsTbody");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><input type="text" class="mon-name" value="${name}" style="width: 90%;"></td><td><input type="text" class="mon-url" value="${url}" style="width: 95%;"></td><td><button type="button" class="btn-orange btn-sm btn-red" onclick="this.closest('tr').remove()">X</button></td>`;
+    tbody.appendChild(tr);
+  }
+
+  function addHttpEndpoint(url = "", body = "") {
+    const container = document.getElementById("httpEndpointsContainer");
+    const div = document.createElement("div");
+    div.style.border = "1px solid #444"; div.style.padding = "10px"; div.style.marginBottom = "10px"; div.style.background = "#111";
+    div.className = "http-row";
+    div.innerHTML = `
+      <div style="display:flex; gap:10px; margin-bottom:5px;">
+        <input type="text" class="ep-url" placeholder="Target HTTP POST URL" value="${url}" style="flex: 1;">
+        <button type="button" class="btn-orange btn-sm btn-red" onclick="this.parentElement.parentElement.remove()">X</button>
+      </div>
+      <textarea class="ep-body" rows="3" placeholder='{"text": "${TRANSTEXT}"}' style="width: 100%; font-family: monospace;">${body}</textarea>
+    `;
+    container.appendChild(div);
+  }
+
+  function toggleGWES(el) {
+    let endec = document.getElementById("cfg_ipaws_enabled");
+    if(el.checked) {
+        endec.checked = false;
+        endec.disabled = true;
+    } else {
+        endec.disabled = false;
+    }
+  }
+
+  async function loadSettings() {
+    try {
+      const res = await apiFetch(`http://${window.location.hostname}:${API_PORT}/api/config`);
+    
+    setTimeout(() => {
+        if (typeof currentConfig !== 'undefined' && currentConfig.wea_logger) {
+            if(document.getElementById('wea_enabled')) document.getElementById('wea_enabled').checked = currentConfig.wea_logger.enabled || false;
+            if(document.getElementById('wea_discord_webhook')) document.getElementById('wea_discord_webhook').value = currentConfig.wea_logger.discord_webhook || '';
+                        if(document.getElementById('wea_geoapify_key')) document.getElementById('wea_geoapify_key').value = currentConfig.wea_logger.geoapify_api_key || '';
+                    }
+    }, 500);
+
+      currentConfig = await res.json();
+
+      const voicesRes = await apiFetch(`http://${window.location.hostname}:${API_PORT}/api/voices`);
+      const availableVoices = await voicesRes.json();
+      const vSelect = document.getElementById("cfg_speechify_voice");
+      vSelect.innerHTML = "";
+      availableVoices.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = v; opt.text = v.toUpperCase();
+        vSelect.appendChild(opt);
+      });
+
+      document.getElementById("cfg_auth_enable").checked = currentConfig.security?.require_auth ?? false;
+      document.getElementById("cfg_auth_user").value = currentConfig.security?.username || "admin";
+
+      document.getElementById("cfg_tts_engine").value = currentConfig.general?.tts_engine || "speechify";
+      updateVoiceList();
+      document.getElementById("cfg_speechify_voice").value = currentConfig.general?.speechify_voice || "speechify";
+      document.getElementById("cfg_speechify_voice").value = currentConfig.general?.speechify_voice || "tom";
+      document.getElementById("cfg_sender_id").value = currentConfig.general?.sender_id || "TaENDEC ";
+      document.getElementById("cfg_overwrite_sender").checked = currentConfig.general?.overwrite_sender_id || false;
+      document.getElementById("cfg_timezone").value = currentConfig.general?.timezone || "America/Chicago";
+      document.getElementById("cfg_pause").value = currentConfig.audio_processing?.pre_alert_pause_ms || 1000;
+
+      document.getElementById("cfg_skip_sender_tts").checked = currentConfig.tts_settings?.skip_sender_id || false;
+      document.getElementById("cfg_disable_ipaws_tts").checked = currentConfig.tts_settings?.disable_tts_ipaws || false;
+      document.getElementById("cfg_disable_global_tts").checked = currentConfig.tts_settings?.disable_tts_global || false;
+
+      document.getElementById("cfg_enforce_fips").checked = currentConfig.filters?.enforce_fips_filtering || false;
+      document.getElementById("cfg_allowed_states").value = (currentConfig.filters?.allowed_state_prefixes || ["27", "91"]).join(", ");
+      document.getElementById("cfg_allowed_fips").value = (currentConfig.filters?.allowed_fips_codes || []).join(", ");
+      document.getElementById("cfg_adv_filters").value = currentConfig.filters?.advanced_filters || "";
+      
+      document.getElementById("cfg_dedupe_enabled").checked = currentConfig.deduplication?.enabled ?? true;
+      document.getElementById("cfg_dedupe_grace").value = currentConfig.deduplication?.grace_period || 3;
+      
+      document.getElementById("cfg_gwes_enabled").checked = currentConfig.ipaws?.gwes_enabled || false;
+      document.getElementById("cfg_ipaws_enabled").checked = currentConfig.ipaws?.endec_enabled || false;
+      document.getElementById("cfg_wea_enabled").checked = currentConfig.ipaws?.wea_enabled || false;
+      document.getElementById("cfg_nws_rss_enabled").checked = currentConfig.ipaws?.nws_rss_enabled || false;
+      document.getElementById("cfg_nws_rss_zones").value = currentConfig.ipaws?.nws_rss_zones || "";
+      toggleGWES(document.getElementById("cfg_gwes_enabled"));
+
+      // Audio Processing Prefixes & Suffixes
+      const ap = currentConfig.audio_processing || {};
+      document.getElementById("cfg_ap_prefix_pos").value = ap.prefix_placement || "before_headers";
+      document.getElementById("cfg_ap_suffix_pos").value = ap.suffix_placement || "after_eom";
+      document.getElementById("cfg_ap_before").value = ap.before_alert_clip || "";
+      
+      const px = ap.prefixes || {};
+      const sx = ap.suffixes || {};
+      document.getElementById("cfg_ap_pre_ean").value = px.NATIONAL_EMERGENCY || "";
+      document.getElementById("cfg_ap_suf_ean").value = sx.NATIONAL_EMERGENCY || "";
+      document.getElementById("cfg_ap_pre_wx").value = px.WEATHER_WARNING || "";
+      document.getElementById("cfg_ap_suf_wx").value = sx.WEATHER_WARNING || "";
+      document.getElementById("cfg_ap_pre_civ").value = px.CIVIL_EMERGENCY || "";
+      document.getElementById("cfg_ap_suf_civ").value = sx.CIVIL_EMERGENCY || "";
+      document.getElementById("cfg_ap_pre_test").value = px.TEST || "";
+      document.getElementById("cfg_ap_suf_test").value = sx.TEST || "";
+      document.getElementById("cfg_ap_pre_watch").value = px.WATCH || "";
+      document.getElementById("cfg_ap_suf_watch").value = sx.WATCH || "";
+      document.getElementById("cfg_ap_pre_adv").value = px.ADVISORY || "";
+      document.getElementById("cfg_ap_suf_adv").value = sx.ADVISORY || "";
+      document.getElementById("cfg_ap_pre_all").value = px.ALL_ALERTS || "";
+      document.getElementById("cfg_ap_suf_all").value = sx.ALL_ALERTS || "";
+
+            document.getElementById("cfg_stream_override").value = currentConfig.streaming?.override_url || "";
+      document.getElementById("cfg_stream_clip").value = currentConfig.streaming?.intro_clip || "";
+      document.getElementById("cfg_stream_mode").value = currentConfig.streaming?.intro_mode || "before";
+      document.getElementById("cfg_ice_enabled").checked = currentConfig.icecast?.enabled || false;
+      document.getElementById("cfg_ice_server").value = currentConfig.icecast?.server_url || "";
+      document.getElementById("cfg_ice_bg").value = currentConfig.icecast?.bg_music_url || "";
+      document.getElementById("cfg_ice_tech").value = currentConfig.icecast?.tech_diff_file || "";
+
+      document.getElementById("cfg_mpv_mode").value = currentConfig.details_channel?.mode || "static_screen";
+      document.getElementById("cfg_mpv_text").value = currentConfig.details_channel?.fallback_text || "";
+      document.getElementById("cfg_mpv_url").value = currentConfig.details_channel?.media_url || "";
+
+      const monitors = currentConfig.monitors || {};
+      document.getElementById("monitorsTbody").innerHTML = "";
+      for (const [name, url] of Object.entries(monitors)) addMonitorRow(name, url);
+
+      const outputs = currentConfig.outputs || {};
+      document.getElementById("cfg_enable_http").checked = outputs.enable_http_post ?? true;
+      document.getElementById("cfg_public_base").value = outputs.public_base_url || `http://${window.location.hostname}:${API_PORT}`;
+      document.getElementById("cfg_tv_multicast").value = outputs.tv_multicast_address || "224.0.0.1:36332";
+      document.getElementById("cfg_inbound_webhooks").value = (outputs.inbound_webhooks || []).join(", ");
+      
+      document.getElementById("httpEndpointsContainer").innerHTML = "";
+      (outputs.http_endpoints || []).forEach(ep => addHttpEndpoint(ep.url, ep.body));
+
+      document.getElementById("cfg_enable_discord").checked = outputs.enable_discord_webhook ?? false;
+      document.getElementById("cfg_discord_urls").value = (outputs.discord_webhook_urls || []).join(", ");
+      document.getElementById("cfg_discord_username").value = outputs.discord_username || "TaENDEC System";
+      document.getElementById("cfg_discord_avatar").value = outputs.discord_avatar_url || "";
+      document.getElementById("cfg_discord_ping").value = outputs.discord_ping_content || "";
+      document.getElementById("cfg_discord_roles").value = (outputs.discord_allowed_role_ids || []).join(", ");
+      document.getElementById("cfg_discord_users").value = (outputs.discord_allowed_user_ids || []).join(", ");
+
+      document.getElementById("cfg_enable_gotify").checked = outputs.gotify?.enabled ?? false;
+      document.getElementById("cfg_gotify_url").value = outputs.gotify?.url || "";
+      document.getElementById("cfg_gotify_token").value = outputs.gotify?.token || "";
+            document.getElementById("cfg_gotify_adr").value = outputs.gotify?.route_adr || "Public";
+      document.getElementById("cfg_gotify_eas_adr").checked = outputs.gotify?.eas_adr_broadcast ?? false;
+      document.getElementById("cfg_gotify_adv").value = outputs.gotify?.route_advisory || "Severe";
+      document.getElementById("cfg_gotify_etws").value = outputs.gotify?.etws_events || "";
+      document.getElementById("cfg_gotify_etws_test").value = outputs.gotify?.etws_test_events || "";
+      document.getElementById("cfg_gotify_literal").value = outputs.gotify?.literal_title_events || "";
+
+
+      const sched = currentConfig.rwt_rmt_scheduler || {};
+      document.getElementById("cfg_rwt_event_type").value = sched.rwt_event_type || "RWT";
+      document.getElementById("cfg_rwt_duration").value = sched.rwt_duration || "0030";
+      document.getElementById("cfg_rwt_fips").value = sched.rwt_fips || "027145";
+      document.getElementById("cfg_rmt_duration").value = sched.rmt_duration || "0030";
+      document.getElementById("cfg_rmt_fips").value = sched.rmt_fips || "027145";
+      document.getElementById("cfg_rwt_exact_day").value = sched.rwt_exact_day ?? 2;
+      document.getElementById("cfg_rwt_exact_time").value = sched.rwt_exact_time || "11:15";
+      document.getElementById("cfg_rwt_text").value = sched.rwt_text || "";
+      document.getElementById("cfg_rwt_voice").value = sched.rwt_voice || "";
+      document.getElementById("cfg_rmt_week").value = sched.rmt_week || 1;
+      document.getElementById("cfg_rmt_day").value = sched.rmt_day ?? 2;
+      document.getElementById("cfg_rmt_time").value = sched.rmt_time || "11:15";
+      document.getElementById("cfg_rmt_text").value = sched.rmt_text || "";
+      document.getElementById("cfg_rmt_voice").value = sched.rmt_voice || "";
+      document.getElementById("cfg_rwt_disable_voice").checked = sched.disable_voice || false;
+
+    } catch (err) {}
+  }
+
+  
+  function triggerStreamOverride(active) {
+      fetch('http://' + window.location.hostname + ':8085/api/stream_override', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+              active: active,
+              url: document.getElementById('cfg_stream_override').value.trim(),
+              intro_clip: document.getElementById('cfg_stream_clip').value.trim(),
+              intro_mode: document.getElementById('cfg_stream_mode').value
+          })
+      }).then(res => res.json()).then(data => alert(active ? "Override Engaged" : "Normal Programming Restored"))
+      .catch(err => alert("Failed to contact daemon."));
+  }
+
+  function updateVoiceList() {
+        const engine = document.getElementById("cfg_tts_engine").value;
+        const voiceSelect = document.getElementById("cfg_speechify_voice"); // or cfg_speechify_voice
+        if (!voiceSelect) return;
+        const currentVoice = voiceSelect.value;
+        voiceSelect.innerHTML = "";
+        
+        let options = [];
+        if (engine === "voicetext") {
+            options = ["paul", "julie", "james", "kate"];
+        } else if (engine === "cepstral") {
+            options = ["allison", "amy", "belle", "callie", "charlie", "dallas", "damien", "david", "diane", "duchess", "duncan", "emily", "linda", "robin", "shouty", "walter", "william", "lawrence", "mille"];
+        } else if (engine === "dectalk") {
+            options = ["dectalk"];
+        } else if (engine === "loquendo") {
+            options = ["dave"];
+        } else if (engine === "speechify") {
+            options = ["tom", "jill", "crsmara", "crstom", "aicraig"];
+        } else {
+            options = ["default"];
+        }
+        
+        options.forEach(opt => {
+            let el = document.createElement("option");
+            el.value = opt;
+            el.textContent = opt.charAt(0).toUpperCase() + opt.slice(1);
+            voiceSelect.appendChild(el);
+        });
+        
+        if (options.includes(currentVoice)) {
+            voiceSelect.value = currentVoice;
+        }
+    }
+
+    
+    async function uploadCepstral(btn) {
+        const name = document.getElementById("new_cepstral_name").value.trim();
+        const fileInput = document.getElementById("new_cepstral_zip");
+        if (!name || !fileInput.files.length) {
+            alert("Please provide a voice name and select a .zip file.");
+            return;
+        }
+        
+        btn.innerText = "Uploading & Extracting... Please wait";
+        btn.disabled = true;
+        
+        try {
+            const buffer = await fileInput.files[0].arrayBuffer();
+            const res = await fetch('http://' + window.location.hostname + ':8085/api/upload_cepstral', {
+                method: 'POST',
+                headers: { 'Voice-Name': name },
+                body: buffer
+            });
+            if (res.ok) {
+                alert("Cepstral voice '" + name.charAt(0).toUpperCase() + name.slice(1) + "' successfully uploaded and extracted to /opt/swift/voices!");
+                document.getElementById("new_cepstral_name").value = "";
+                fileInput.value = "";
+            } else {
+                alert("Upload failed. Check daemon logs.");
+            }
+        } catch(e) {
+            alert("Upload Error: " + e);
+        }
+        
+        btn.innerText = "Upload & Extract .ZIP";
+        btn.disabled = false;
+    }
+
+    async function saveSettings() {
+    currentConfig.security = currentConfig.security || {};
+    currentConfig.security.require_auth = document.getElementById("cfg_auth_enable").checked;
+    currentConfig.security.username = document.getElementById("cfg_auth_user").value || "admin";
+    
+    let newPass = document.getElementById("cfg_auth_pass").value;
+    if(newPass) currentConfig.security.password = newPass;
+
+    currentConfig.general = {
+      sender_id: document.getElementById("cfg_sender_id").value.padEnd(8, " ").substring(0, 8),
+      overwrite_sender_id: document.getElementById("cfg_overwrite_sender").checked,
+      timezone: document.getElementById("cfg_timezone").value,
+      tts_engine: document.getElementById("cfg_tts_engine").value,
+      speechify_voice: document.getElementById("cfg_speechify_voice").value
+    };
+
+    currentConfig.audio_processing = {
+      pre_alert_pause_ms: parseInt(document.getElementById("cfg_pause").value) || 1000,
+      prefix_placement: document.getElementById("cfg_ap_prefix_pos").value,
+      suffix_placement: document.getElementById("cfg_ap_suffix_pos").value,
+      before_alert_clip: document.getElementById("cfg_ap_before").value.trim(),
+      prefixes: {
+          NATIONAL_EMERGENCY: document.getElementById("cfg_ap_pre_ean").value.trim(),
+          WEATHER_WARNING: document.getElementById("cfg_ap_pre_wx").value.trim(),
+          CIVIL_EMERGENCY: document.getElementById("cfg_ap_pre_civ").value.trim(),
+          TEST: document.getElementById("cfg_ap_pre_test").value.trim(),
+          WATCH: document.getElementById("cfg_ap_pre_watch").value.trim(),
+          ADVISORY: document.getElementById("cfg_ap_pre_adv").value.trim(),
+          ALL_ALERTS: document.getElementById("cfg_ap_pre_all").value.trim()
+      },
+      suffixes: {
+          NATIONAL_EMERGENCY: document.getElementById("cfg_ap_suf_ean").value.trim(),
+          WEATHER_WARNING: document.getElementById("cfg_ap_suf_wx").value.trim(),
+          CIVIL_EMERGENCY: document.getElementById("cfg_ap_suf_civ").value.trim(),
+          TEST: document.getElementById("cfg_ap_suf_test").value.trim(),
+          WATCH: document.getElementById("cfg_ap_suf_watch").value.trim(),
+          ADVISORY: document.getElementById("cfg_ap_suf_adv").value.trim(),
+          ALL_ALERTS: document.getElementById("cfg_ap_suf_all").value.trim()
+      }
+    };
+
+    currentConfig.tts_settings = {
+        skip_sender_id: document.getElementById("cfg_skip_sender_tts").checked,
+        disable_tts_ipaws: document.getElementById("cfg_disable_ipaws_tts").checked,
+        disable_tts_global: document.getElementById("cfg_disable_global_tts").checked
+    };
+
+    currentConfig.filters = {
+        enforce_fips_filtering: document.getElementById("cfg_enforce_fips").checked,
+        allowed_state_prefixes: document.getElementById("cfg_allowed_states").value.split(",").map(x => x.trim()).filter(Boolean),
+        allowed_fips_codes: document.getElementById("cfg_allowed_fips").value.split(/[\s,;-]+/).map(x => x.trim()).filter(Boolean),
+        advanced_filters: document.getElementById("cfg_adv_filters").value.trim()
+    };
+
+    currentConfig.deduplication = {
+        enabled: document.getElementById("cfg_dedupe_enabled").checked,
+        grace_period: parseInt(document.getElementById("cfg_dedupe_grace").value) || 3
+    };
+
+    
+    currentConfig.capcp = {
+        enabled: document.getElementById("cfg_capcp_enabled").checked,
+        lang: document.getElementById("cfg_capcp_lang").value,
+        tone: document.getElementById("cfg_capcp_tone").value,
+        prefix: document.getElementById("cfg_capcp_pre").value.trim(),
+        suffix: document.getElementById("cfg_capcp_suf").value.trim()
+    };
+
+    currentConfig.ipaws = {
+        gwes_enabled: document.getElementById("cfg_gwes_enabled").checked,
+        endec_enabled: document.getElementById("cfg_ipaws_enabled").checked,
+        wea_enabled: document.getElementById("cfg_wea_enabled").checked,
+        nws_rss_enabled: document.getElementById("cfg_nws_rss_enabled").checked,
+        nws_rss_zones: document.getElementById("cfg_nws_rss_zones").value.trim()
+    };
+
+        currentConfig.streaming = {
+      override_url: document.getElementById("cfg_stream_override").value.trim(),
+      intro_clip: document.getElementById("cfg_stream_clip").value.trim(),
+      intro_mode: document.getElementById("cfg_stream_mode").value
+    };
+
+    currentConfig.icecast = {
+        enabled: document.getElementById("cfg_ice_enabled").checked,
+        server_url: document.getElementById("cfg_ice_server").value.trim(),
+        bg_music_url: document.getElementById("cfg_ice_bg").value.trim(),
+        tech_diff_file: document.getElementById("cfg_ice_tech").value.trim()
+    };
+
+    currentConfig.details_channel = {
+        mode: document.getElementById("cfg_mpv_mode").value,
+        fallback_text: document.getElementById("cfg_mpv_text").value,
+        media_url: document.getElementById("cfg_mpv_url").value.trim()
+    };
+
+    currentConfig.monitors = {};
+    document.querySelectorAll("#monitorsTbody tr").forEach(tr => {
+      const name = tr.querySelector(".mon-name").value.trim();
+      const url = tr.querySelector(".mon-url").value.trim();
+      if (name && url) currentConfig.monitors[name] = url;
+    });
+
+    currentConfig.outputs = currentConfig.outputs || {};
+    currentConfig.outputs.enable_http_post = document.getElementById("cfg_enable_http").checked;
+    currentConfig.outputs.public_base_url = document.getElementById("cfg_public_base").value.replace(/\/$/, '');
+    currentConfig.outputs.tv_multicast_address = document.getElementById("cfg_tv_multicast").value.trim();
+    currentConfig.outputs.inbound_webhooks = document.getElementById("cfg_inbound_webhooks").value.split(",").map(x => x.trim()).filter(Boolean);
+    
+    currentConfig.outputs.http_endpoints = [];
+    document.querySelectorAll(".http-row").forEach(box => {
+      let u = box.querySelector(".ep-url").value.trim();
+      let b = box.querySelector(".ep-body").value;
+      if (u) currentConfig.outputs.http_endpoints.push({url: u, body: b});
+    });
+
+    currentConfig.outputs.enable_discord_webhook = document.getElementById("cfg_enable_discord").checked;
+    currentConfig.outputs.discord_webhook_urls = document.getElementById("cfg_discord_urls").value.split(",").map(x => x.trim()).filter(Boolean);
+    currentConfig.outputs.discord_username = document.getElementById("cfg_discord_username").value.trim();
+    currentConfig.outputs.discord_avatar_url = document.getElementById("cfg_discord_avatar").value.trim();
+    currentConfig.outputs.discord_ping_content = document.getElementById("cfg_discord_ping").value;
+    currentConfig.outputs.discord_allowed_role_ids = document.getElementById("cfg_discord_roles").value.split(",").map(x => x.trim()).filter(Boolean);
+    currentConfig.outputs.discord_allowed_user_ids = document.getElementById("cfg_discord_users").value.split(",").map(x => x.trim()).filter(Boolean);
+
+    currentConfig.outputs.gotify = {
+      enabled: document.getElementById("cfg_enable_gotify").checked,
+      url: document.getElementById("cfg_gotify_url").value.trim(),
+      token: document.getElementById("cfg_gotify_token").value.trim(),
+      route_adr: document.getElementById("cfg_gotify_adr").value,
+      eas_adr_broadcast: document.getElementById("cfg_gotify_eas_adr").checked,
+      route_advisory: document.getElementById("cfg_gotify_adv").value,
+      etws_events: document.getElementById("cfg_gotify_etws").value.trim(),
+      etws_test_events: document.getElementById("cfg_gotify_etws_test").value.trim(),
+      literal_title_events: document.getElementById("cfg_gotify_literal").value.trim()
+    };
+
+
+    currentConfig.rwt_rmt_scheduler = {
+      rwt_event_type: document.getElementById("cfg_rwt_event_type").value,
+      rwt_duration: document.getElementById("cfg_rwt_duration").value,
+      rwt_fips: document.getElementById("cfg_rwt_fips").value, 
+      rmt_duration: document.getElementById("cfg_rmt_duration").value,
+      rmt_fips: document.getElementById("cfg_rmt_fips").value, 
+      rwt_exact_day: parseInt(document.getElementById("cfg_rwt_exact_day").value), 
+      rwt_exact_time: document.getElementById("cfg_rwt_exact_time").value, 
+      rwt_text: document.getElementById("cfg_rwt_text").value, 
+      rwt_voice: document.getElementById("cfg_rwt_voice").value, 
+      rmt_week: parseInt(document.getElementById("cfg_rmt_week").value), 
+      rmt_day: parseInt(document.getElementById("cfg_rmt_day").value), 
+      rmt_time: document.getElementById("cfg_rmt_time").value, 
+      rmt_text: document.getElementById("cfg_rmt_text").value, 
+      rmt_voice: document.getElementById("cfg_rmt_voice").value, 
+      disable_voice: document.getElementById("cfg_rwt_disable_voice").checked
+    };
+
+    try {
+      
+    // Append WEA Logger settings to the payload
+    currentConfig.wea_logger = {
+        enabled: document.getElementById('wea_enabled').checked,
+        discord_webhook: document.getElementById('wea_discord_webhook').value.trim(),
+        discord_role_id: document.getElementById('wea_discord_role_id').value.trim(),
+        geoapify_api_key: document.getElementById('wea_geoapify_key').value.trim()
+        };
+
+    const res = await apiFetch(`http://${window.location.hostname}:${API_PORT}/api/config`, { method: "POST", body: JSON.stringify(currentConfig) });
+      alert((await res.json()).status);
+      document.getElementById("cfg_auth_pass").value = "";
+    } catch (err) { alert("Failed to save settings."); }
+  }
+
+  async function submitAlert(e) {
+    e.preventDefault();
+    const fipsInput = document.getElementById("manualFips").value;
+    if (!fipsInput.trim()) return alert("Must specify at least one location.");
+    const endpoint = currentMode === "send" ? "/api/transmit" : "/api/schedule";
+    const payload = {
+      originator: document.getElementById("originator").value, eventCode: document.getElementById("eventType").value, duration: document.getElementById("durHr").value + document.getElementById("durMin").value, fipsCodes: fipsInput, additionalText: document.getElementById("additionalText").value, hasAudio: !!document.getElementById("voice_wav_path").value, voice_wav_path: document.getElementById("voice_wav_path").value, skip_translation_in_tts: document.getElementById("skip_translation").checked, startTime: document.getElementById("startTime").value || new Date().toISOString()
+    };
+    try {
+      const res = await apiFetch(`http://${window.location.hostname}:${API_PORT}${endpoint}`, { method: "POST", body: JSON.stringify(payload) });
+      alert((await res.json()).status);
+    } catch (err) { alert("API Connection Failed."); }
+  }
+
+  async function fetchHistory() {
+    try {
+      const res = await apiFetch(`http://${window.location.hostname}:${API_PORT}/api/history`);
+      const data = await res.json();
+      const tbody = document.getElementById("historyTableBody");
+      tbody.innerHTML = "";
+      data.forEach(a => {
+        tbody.innerHTML += `<tr><td>${a.timestamp}</td><td>${a.header}</td><td>${a.mode}</td><td>${a.file ? `<a href="http://${window.location.hostname}:${API_PORT}/archive/${a.file}" target="_blank">Play</a>` : "N/A"}</td></tr>`;
+      });
+    } catch (err) {}
+  }
+</script>
+
+</body>
+</html>
