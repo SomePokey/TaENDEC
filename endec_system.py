@@ -1,3 +1,4 @@
+import collections
 import urllib.parse
 #!/usr/bin/env python3
 """
@@ -265,9 +266,83 @@ def is_duplicate(raw_header):
     if len(DEDUPE_CACHE) > 50: DEDUPE_CACHE.pop(0)
     return False
 
+def parse_same_sender_id(raw_header):
+    # SAME format: ZCZC-ORG-EEE-PSSCCC+TTTT-JJJHHMM-LLLLLLLL-
+    cleaned = raw_header.replace("EAS:", "").rstrip("-")
+    parts = cleaned.split("-")
+    if len(parts) >= 2:
+        # Sender ID is the final 8-char field (preserve exact spaces, pad to 8 if needed)
+        sender = parts[-1]
+        return sender.ljust(8)[:8]
+    return ""
+
+def _fips_matches_rule(header_fips_list, rule_fips_list):
+    # Returns True if ANY county in the alert matches ANY county pattern in rule_fips_list
+    for hf in header_fips_list:
+        hf_5 = hf[1:] if len(hf) == 6 else hf
+        for rf in rule_fips_list:
+            if rf.endswith("*"):
+                prefix = rf[:-1]
+                if hf.startswith(prefix) or hf_5.startswith(prefix):
+                    return True
+            else:
+                rf_6 = rf.zfill(6) if len(rf) == 5 else rf
+                if hf == rf_6 or hf_5 == rf:
+                    return True
+    return False
+
+def evaluate_sender_compound_rules(raw_header, rules_text):
+    if not rules_text or not rules_text.strip():
+        return None
+    header_clean = raw_header.replace("EAS:", "").strip("-")
+    parts = header_clean.split("-")
+    evt_code = parts[2].strip().upper() if len(parts) > 2 else ""
+    sender_id = parse_same_sender_id(raw_header)
+    fips_match = re.search(r"-([0-9\-]+)\+", raw_header)
+    header_fips = [f.strip() for f in fips_match.group(1).split("-") if len(f.strip()) == 6] if fips_match else []
+
+    for raw_line in rules_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "|" not in line:
+            continue
+        cols = line.split("|")
+        if len(cols) < 2:
+            continue
+        action = cols[0].strip().upper()
+        rule_sender = cols[1]
+        # Strip only a single delimiter padding space around the pipe if present, preserving trailing sender spaces
+        if rule_sender.startswith(" "):
+            rule_sender = rule_sender[1:]
+        if rule_sender.endswith(" ") and len(rule_sender) > 8:
+            rule_sender = rule_sender[:-1]
+        rule_sender_cmp = rule_sender.ljust(8)[:8] if rule_sender.strip() != "*" else "*"
+
+        rule_events = [e.strip().upper() for e in cols[2].split(",") if e.strip() and e.strip() != "*"] if len(cols) > 2 else []
+        rule_fips = [f.strip() for f in cols[3].split(",") if f.strip() and f.strip() != "*"] if len(cols) > 3 else []
+
+        if rule_sender_cmp != "*" and sender_id != rule_sender_cmp:
+            continue
+        if rule_events and evt_code not in rule_events:
+            continue
+        if rule_fips and not _fips_matches_rule(header_fips, rule_fips):
+            continue
+
+        if action == "BLOCK":
+            logger.info(f"Blocked alert via Sender/Compound Filter: sender='{sender_id}' event={evt_code} matched_fips_in={header_fips}")
+            return False
+        elif action == "ALLOW":
+            return True
+    return None
+
 def is_in_alerting_area(raw_header):
     config = load_taendec_config()
     filters = config.get("filters", {})
+
+    # 1. Evaluate Sender ID + Event + County compound rules first (applies globally even if FIPS enforcement is off)
+    compound_decision = evaluate_sender_compound_rules(raw_header, filters.get("sender_filters", ""))
+    if compound_decision is not None:
+        return compound_decision
+
     if not filters.get("enforce_fips_filtering", False): return True
     
     allowed_states = filters.get("allowed_state_prefixes", ["27", "91"])
@@ -289,6 +364,11 @@ def is_in_alerting_area(raw_header):
         if not fips_match: return True
         header_fips = [f.strip() for f in fips_match.group(1).split("-") if len(f.strip()) == 6]
         
+        # National EAS override: state code '00' (e.g. 000000 for All US) bypasses geographic FIPS restrictions
+        if any(fips[1:3] == "00" for fips in header_fips):
+            logger.info(f"National alert state code '00' detected in {header_fips}; overriding geographic filtering.")
+            return True
+
         has_adv = bool(adv_filters)
         for fips in header_fips:
             if has_adv and fips in adv_filters:
@@ -402,21 +482,55 @@ def format_custom_template_vars(raw_header, additional_text="", compiled_wav_pat
         "${HEADER}": raw_header, "${TRANSTEXT}": transtext, "${ADDTEXT}": additional_text, "${AUDIO_URL}": audio_url
     }
 
+def send_single_http_webhook(ep, raw_header, additional_text="", compiled_wav_path=""):
+    target_url = (ep.get("url") or "").strip()
+    if not target_url:
+        return False, "Missing URL"
+    var_map = format_custom_template_vars(raw_header, additional_text, compiled_wav_path)
+    body_tmpl = ep.get("body", "") or '{"header": "${HEADER}", "event": "${EVENT}", "sender": "${SENDERID}", "text": "${TRANSTEXT}", "audio_url": "${AUDIO_URL}"}'
+    final_body = body_tmpl
+    # JSON-escape substituted string values (strip surrounding quotes from json.dumps) so newlines/quotes never break JSON payloads
+    for k, v in var_map.items():
+        escaped_val = json.dumps(str(v))[1:-1]
+        final_body = final_body.replace(k, escaped_val)
+
+    req_headers = {"Content-Type": "application/json", "User-Agent": "TaENDEC-Webhook/1.0"}
+    raw_hdrs = ep.get("headers", "")
+    if isinstance(raw_hdrs, dict):
+        req_headers.update({str(hk): str(hv) for hk, hv in raw_hdrs.items()})
+    elif isinstance(raw_hdrs, str) and raw_hdrs.strip():
+        try:
+            parsed_h = json.loads(raw_hdrs)
+            if isinstance(parsed_h, dict):
+                req_headers.update({str(hk): str(hv) for hk, hv in parsed_h.items()})
+        except Exception:
+            for line in raw_hdrs.splitlines():
+                if ":" in line:
+                    hk, hv = line.split(":", 1)
+                    if hk.strip():
+                        req_headers[hk.strip()] = hv.strip()
+
+    try:
+        req = urllib.request.Request(target_url, data=final_body.encode("utf-8"), headers=req_headers, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            status = getattr(resp, "status", 200)
+            logger.info(f"Outbound HTTP POST webhook succeeded ({status}) -> {target_url}")
+            return True, f"HTTP {status}"
+    except Exception as e:
+        logger.error(f"HTTP POST error to {target_url}: {e}")
+        return False, str(e)
+
 def dispatch_http_endpoints(raw_header, additional_text="", compiled_wav_path=""):
     config = load_taendec_config()
     outputs = config.get("outputs", {})
     if not outputs.get("enable_http_post", True): return
     endpoints = outputs.get("http_endpoints", [])
-    var_map = format_custom_template_vars(raw_header, additional_text, compiled_wav_path)
     for ep in endpoints:
-        target_url = ep.get("url")
-        if not target_url: continue
-        final_body = ep.get("body", "")
-        for k, v in var_map.items(): final_body = final_body.replace(k, str(v))
-        try:
-            req = urllib.request.Request(target_url, data=final_body.encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
-            urllib.request.urlopen(req, timeout=10)
-        except Exception as e: logger.error(f"HTTP POST error to {target_url}: {e}")
+        threading.Thread(
+            target=send_single_http_webhook,
+            args=(ep, raw_header, additional_text, compiled_wav_path),
+            daemon=True
+        ).start()
 
 def notify_tv_alert_done(raw_header):
     config = load_taendec_config()
@@ -776,143 +890,420 @@ def launch_mpv_display(media_sources):
 
 def stop_mpv_display(): launch_idle_screen()
 
+
+_EMERG_MCAST_STATE = {"url": "", "last_pkt": 0.0, "lock": threading.Lock()}
+
+def _emerg_mcast_sniffer_loop():
+    import socket, struct, urllib.parse
+    sock = None
+    bound_target = None
+    while True:
+        try:
+            cfg = load_taendec_config().get("icecast", {})
+            enabled = cfg.get("emerg_mcast_enabled", False)
+            url = cfg.get("emerg_mcast_url", "").strip()
+            if not enabled or not url:
+                if sock:
+                    try: sock.close()
+                    except Exception: pass
+                    sock = None
+                    bound_target = None
+                time.sleep(1.0)
+                continue
+
+            parsed = urllib.parse.urlparse(url)
+            mcast_ip = parsed.hostname
+            mcast_port = parsed.port
+            if not mcast_ip or not mcast_port:
+                time.sleep(1.0)
+                continue
+
+            if (mcast_ip, mcast_port) != bound_target:
+                if sock:
+                    try: sock.close()
+                    except Exception: pass
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                try:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                except Exception:
+                    pass
+                sock.bind(("0.0.0.0", mcast_port))
+                mreq = struct.pack("4s4s", socket.inet_aton(mcast_ip), socket.inet_aton("0.0.0.0"))
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                sock.settimeout(1.0)
+                bound_target = (mcast_ip, mcast_port)
+                with _EMERG_MCAST_STATE["lock"]:
+                    _EMERG_MCAST_STATE["url"] = url
+                    _EMERG_MCAST_STATE["last_pkt"] = 0.0
+
+            data, _ = sock.recvfrom(2048)
+            if data:
+                with _EMERG_MCAST_STATE["lock"]:
+                    _EMERG_MCAST_STATE["last_pkt"] = time.time()
+        except socket.timeout:
+            continue
+        except Exception:
+            time.sleep(1.0)
+
+threading.Thread(target=_emerg_mcast_sniffer_loop, daemon=True).start()
+
+def is_emerg_mcast_active(url, holdover_sec=0.15):
+    with _EMERG_MCAST_STATE["lock"]:
+        if _EMERG_MCAST_STATE["url"] != url.strip():
+            return False
+        return (time.time() - _EMERG_MCAST_STATE["last_pkt"]) <= holdover_sec
 def gapless_icecast_worker():
     global ICECAST_ALERT_FILE
-    config = load_taendec_config()
-    ice = config.get("icecast", {})
-    if not ice.get("enabled", False) or not ice.get("server_url"): return
-        
-    server_url = ice.get("server_url")
-    tech_diff_path = ice.get("tech_diff_file", "")
-    
-    master_cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error",
-        "-f", "s16le", "-ar", "22050", "-ac", "1", "-i", "pipe:0",
-        "-c:a", "libmp3lame", "-b:a", "128k", "-content_type", "audio/mpeg",
-        "-f", "mp3", server_url
-    ]
-    master_proc = subprocess.Popen(master_cmd, stdin=subprocess.PIPE)
-    
-    bg_proc = None
-    tech_proc = None
-    intro_proc = None
-    last_bg_retry = 0
-    current_state_was_override = False
-    intro_duck_pending = False
-    
-    def spawn_audio_proc(url):
-        if not url: return None
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", url, "-f", "s16le", "-ar", "22050", "-ac", "1", "-"]
+    import collections, select
+
+    # 20ms at 22050 Hz, 16-bit mono = 441 samples = 882 bytes
+    FRAME_BYTES = 882
+    FRAME_INTERVAL = 0.020
+    DITHER_FRAME = (b"\x01\x00\xff\xff" * 220) + b"\x01\x00"
+
+    pcm_ring = collections.deque()
+    ring_lock = threading.Lock()
+    MAX_RING_FRAMES = 25  # 500ms max buffer so live latency stays low
+
+    def push_pcm_bytes(raw_bytes):
+        if not raw_bytes:
+            return
+        with ring_lock:
+            pcm_ring.append(raw_bytes)
+            # Trim excess backlog if an HTTP source bursts faster than real time
+            total_bytes = sum(len(x) for x in pcm_ring)
+            while total_bytes > FRAME_BYTES * MAX_RING_FRAMES and len(pcm_ring) > 1:
+                dropped = pcm_ring.popleft()
+                total_bytes -= len(dropped)
+
+    def pop_20ms_frame():
+        with ring_lock:
+            if not pcm_ring:
+                return DITHER_FRAME
+            out = bytearray()
+            while pcm_ring and len(out) < FRAME_BYTES:
+                head = pcm_ring[0]
+                needed = FRAME_BYTES - len(out)
+                if len(head) <= needed:
+                    out.extend(pcm_ring.popleft())
+                else:
+                    out.extend(head[:needed])
+                    pcm_ring[0] = head[needed:]
+            if len(out) < FRAME_BYTES:
+                out.extend(DITHER_FRAME[:FRAME_BYTES - len(out)])
+            return bytes(out)
+
+    def clear_ring():
+        with ring_lock:
+            pcm_ring.clear()
+
+    def build_rtp_sdp(url, codec):
+        import urllib.parse, tempfile
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.hostname or "239.1.1.1"
+        port = parsed.port or 5004
+        codec_map = {
+            "pcm_s16le_48k_stereo": (96, "L16/48000/2"),
+            "pcm_s16le_48k_mono":   (96, "L16/48000/1"),
+            "g722":                 (9,  "G722/8000"),
+            "pcmu":                 (0,  "PCMU/8000"),
+            "pcma":                 (8,  "PCMA/8000"),
+        }
+        pt, rtpmap = codec_map.get(codec, (96, "L16/48000/2"))
+        sdp = (
+            f"v=0\r\n"
+            f"o=- 0 0 IN IP4 127.0.0.1\r\n"
+            f"s=TaENDEC RTP\r\n"
+            f"c=IN IP4 {host}/64\r\n"
+            f"t=0 0\r\n"
+            f"m=audio {port} RTP/AVP {pt}\r\n"
+            f"a=rtpmap:{pt} {rtpmap}\r\n"
+        )
+        fd, sdp_path = tempfile.mkstemp(prefix="taendec_rtp_", suffix=".sdp")
+        with os.fdopen(fd, "w") as sf:
+            sf.write(sdp)
+        return sdp_path
+
+    def spawn_audio_proc(stream_spec):
+        if not stream_spec:
+            return None
+        url, codec = stream_spec if isinstance(stream_spec, tuple) else (stream_spec, "auto")
+        if not url:
+            return None
+        if url.lower().startswith("rtp://") and codec != "auto":
+            sdp_path = build_rtp_sdp(url, codec)
+            cmd = [
+                "ffmpeg", "-hide_banner", "-loglevel", "fatal",
+                "-protocol_whitelist", "file,rtp,udp",
+                "-rw_timeout", "300000",
+                "-fflags", "+nobuffer+discardcorrupt", "-flags", "low_delay",
+                "-i", sdp_path,
+                "-f", "s16le", "-ar", "22050", "-ac", "1", "-"
+            ]
+        elif url.lower().startswith("udp://"):
+            cmd = [
+                "ffmpeg", "-hide_banner", "-loglevel", "fatal",
+                "-rw_timeout", "300000",
+                "-fflags", "+nobuffer+discardcorrupt",
+                "-i", url,
+                "-f", "s16le", "-ar", "22050", "-ac", "1", "-"
+            ]
+        elif url.lower().startswith(("http://", "https://")):
+            cmd = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-re", "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2",
+                "-i", url,
+                "-f", "s16le", "-ar", "22050", "-ac", "1", "-"
+            ]
+        else:
+            cmd = [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-re", "-i", url,
+                "-f", "s16le", "-ar", "22050", "-ac", "1", "-"
+            ]
         return subprocess.Popen(cmd, stdout=subprocess.PIPE)
-        
+
     def get_active_stream():
         config = load_taendec_config()
-        normal_url = config.get("icecast", {}).get("bg_music_url", "")
+        ice_cfg = config.get("icecast", {})
+        normal_url = ice_cfg.get("bg_music_url", "")
+        normal_codec = ice_cfg.get("bg_music_codec", "auto")
+
+        # Priority 2: Emergency Multicast Preemption (0.12s holdover so release is instantaneous)
+        if ice_cfg.get("emerg_mcast_enabled") and ice_cfg.get("emerg_mcast_url"):
+            if is_emerg_mcast_active(ice_cfg.get("emerg_mcast_url"), holdover_sec=0.12):
+                return (ice_cfg.get("emerg_mcast_url"), ice_cfg.get("emerg_mcast_codec", "pcm_s16le_48k_stereo")), True
+
         with STATE_LOCK:
             active = STREAM_STATE.get("override_active", False)
             override_url = STREAM_STATE.get("override_url", "")
             fail_time = STREAM_STATE.get("last_failure_time")
-            
+
         if active and fail_time and (time.time() - fail_time > 120):
             logger.info("Override stream failed to recover. Reverting to normal.")
             with STATE_LOCK:
                 STREAM_STATE["override_active"] = False
                 active = False
-                
+
         if not active:
-            return normal_url, False
-            
+            return (normal_url, normal_codec), False
+
         actual_url = override_url
         if "youtube.com" in override_url or "youtu.be" in override_url:
-            try: actual_url = subprocess.check_output(["yt-dlp", "-f", "bestaudio", "-g", override_url]).decode().strip()
+            try:
+                actual_url = subprocess.check_output(["yt-dlp", "-f", "bestaudio", "-g", override_url]).decode().strip()
             except Exception as e:
                 logger.error(f"yt-dlp failed: {e}")
                 if not fail_time:
-                    with STATE_LOCK: STREAM_STATE["last_failure_time"] = time.time()
+                    with STATE_LOCK:
+                        STREAM_STATE["last_failure_time"] = time.time()
                 return None, True
-                
-        with STATE_LOCK: STREAM_STATE["last_failure_time"] = None
+
+        with STATE_LOCK:
+            STREAM_STATE["last_failure_time"] = None
         return actual_url, True
 
+    def start_master_proc(raw_server_url):
+        import socket, urllib.parse
+        resolved_url = raw_server_url
+        try:
+            u = urllib.parse.urlparse(raw_server_url)
+            if u.hostname:
+                ipv4 = socket.gethostbyname(u.hostname)
+                netloc = u.netloc.replace(u.hostname, ipv4, 1)
+                resolved_url = urllib.parse.urlunparse((u.scheme, netloc, u.path, u.params, u.query, u.fragment))
+        except Exception:
+            pass
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error",
+            "-f", "s16le", "-ar", "22050", "-ac", "1", "-i", "pipe:0",
+            "-c:a", "libmp3lame", "-ar", "44100", "-ac", "2", "-b:a", "128k",
+            "-flush_packets", "1", "-legacy_icecast", "1", "-content_type", "audio/mpeg",
+            "-f", "mp3", resolved_url
+        ]
+        return subprocess.Popen(cmd, stdin=subprocess.PIPE)
+
+    # Dedicated 20ms monotonic clock-locked output pump (never waits on input streams)
+    def master_clock_pump():
+        server_url = load_taendec_config().get("icecast", {}).get("server_url", "").strip()
+        master_proc = None
+        next_tick = time.monotonic()
+        while True:
+            cfg_ice = load_taendec_config().get("icecast", {})
+            if not cfg_ice.get("enabled", False) or not cfg_ice.get("server_url", "").strip():
+                if master_proc:
+                    try: master_proc.kill()
+                    except Exception: pass
+                    master_proc = None
+                time.sleep(0.5)
+                next_tick = time.monotonic()
+                continue
+
+            new_url = cfg_ice.get("server_url", "").strip()
+            if new_url != server_url or master_proc is None or master_proc.poll() is not None:
+                if master_proc:
+                    try: master_proc.kill()
+                    except Exception: pass
+                server_url = new_url
+                try:
+                    master_proc = start_master_proc(server_url)
+                except Exception:
+                    time.sleep(1.0)
+                    next_tick = time.monotonic()
+                    continue
+
+            frame = pop_20ms_frame()
+            try:
+                master_proc.stdin.write(frame)
+                master_proc.stdin.flush()
+            except Exception:
+                try: master_proc.kill()
+                except Exception: pass
+                master_proc = None
+                time.sleep(0.5)
+                next_tick = time.monotonic()
+                continue
+
+            next_tick += FRAME_INTERVAL
+            sleep_for = next_tick - time.monotonic()
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            else:
+                next_tick = time.monotonic()
+
+    threading.Thread(target=master_clock_pump, daemon=True).start()
+
+    # Source Feeder Loop (populates pcm_ring from Priority 1 -> 2 -> 3 -> 4)
+    bg_proc = None
+    tech_proc = None
+    intro_proc = None
+    last_bg_retry = 0.0
+    bg_spawn_time = 0.0
+    current_active_spec = None
+    current_state_was_override = False
+    intro_duck_pending = False
+
     while True:
-        if ICECAST_ALERT_FILE and os.path.exists(ICECAST_ALERT_FILE):
-            if bg_proc: bg_proc.kill(); bg_proc = None
-            if tech_proc: tech_proc.kill(); tech_proc = None
-            if intro_proc: intro_proc.kill(); intro_proc = None
-            
-            alert_proc = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-i", ICECAST_ALERT_FILE, "-f", "s16le", "-ar", "22050", "-ac", "1", "-"], stdout=subprocess.PIPE)
-            while ICECAST_ALERT_FILE:
-                chunk = alert_proc.stdout.read(4096)
-                if not chunk: break
-                try: master_proc.stdin.write(chunk); master_proc.stdin.flush()
-                except: break
-            alert_proc.kill()
-            ICECAST_ALERT_FILE = None
-            last_bg_retry = 0
+        cfg_ice = load_taendec_config().get("icecast", {})
+        if not cfg_ice.get("enabled", False):
+            time.sleep(0.5)
             continue
 
+        tech_diff_path = cfg_ice.get("tech_diff_file", "")
+
+        # Priority 1: Live EAS Alert Audio
+        if ICECAST_ALERT_FILE and os.path.exists(ICECAST_ALERT_FILE):
+            current_alert_file = ICECAST_ALERT_FILE
+            ICECAST_ALERT_FILE = None
+            clear_ring()
+            for p in (bg_proc, tech_proc, intro_proc):
+                if p:
+                    try: p.kill()
+                    except Exception: pass
+            bg_proc = tech_proc = intro_proc = None
+
+            alert_proc = subprocess.Popen(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-i", current_alert_file, "-f", "s16le", "-ar", "22050", "-ac", "1", "-"],
+                stdout=subprocess.PIPE
+            )
+            while True:
+                chunk = alert_proc.stdout.read(FRAME_BYTES)
+                if not chunk:
+                    break
+                push_pcm_bytes(chunk)
+            try: alert_proc.wait(timeout=2)
+            except Exception: alert_proc.kill()
+            last_bg_retry = 0.0
+            continue
+
+        desired_spec, is_override_now = get_active_stream()
         with STATE_LOCK:
             active_now = STREAM_STATE.get("override_active", False)
             intro_clip = STREAM_STATE.get("intro_clip", "")
             intro_mode = STREAM_STATE.get("intro_mode", "before")
-        
-        if active_now != current_state_was_override:
-            if bg_proc: bg_proc.kill(); bg_proc = None
-            if intro_proc: intro_proc.kill(); intro_proc = None
+
+        if desired_spec != current_active_spec or active_now != current_state_was_override:
+            clear_ring()
+            if bg_proc:
+                try: bg_proc.kill()
+                except Exception: pass
+                bg_proc = None
+            if intro_proc:
+                try: intro_proc.kill()
+                except Exception: pass
+                intro_proc = None
+            current_active_spec = desired_spec
             current_state_was_override = active_now
-            last_bg_retry = 0
+            last_bg_retry = 0.0
+            bg_spawn_time = 0.0
             intro_duck_pending = False
-            
+
             if active_now and intro_clip and os.path.exists(intro_clip):
                 if intro_mode == "before":
                     intro_proc = spawn_audio_proc(intro_clip)
                 elif intro_mode == "duck":
                     intro_duck_pending = True
-                
+
         chunk = None
-        
         if intro_proc:
-            chunk = intro_proc.stdout.read(4096)
+            chunk = intro_proc.stdout.read(FRAME_BYTES)
             if not chunk:
-                intro_proc.kill(); intro_proc = None
-        
+                try: intro_proc.kill()
+                except Exception: pass
+                intro_proc = None
+
         if not chunk and bg_proc and bg_proc.poll() is None:
-            chunk = bg_proc.stdout.read(4096)
-            
-            # SEAMLESS TRANSITION: Only kill tech_diff if the BG stream successfully delivers audio
-            if chunk and tech_proc:
-                tech_proc.kill(); tech_proc = None
-            
-        if not chunk and not intro_proc:
-            if bg_proc: bg_proc.kill(); bg_proc = None
-            
-            if time.time() - last_bg_retry > 5:
-                url, is_override = get_active_stream()
-                if url:
+            is_mcast = isinstance(current_active_spec, tuple) and str(current_active_spec[0]).lower().startswith(("rtp://", "udp://"))
+            rlist, _, _ = select.select([bg_proc.stdout], [], [], 0.02)
+            if rlist:
+                chunk = bg_proc.stdout.read(FRAME_BYTES)
+                if chunk and tech_proc:
+                    try: tech_proc.kill()
+                    except Exception: pass
+                    tech_proc = None
+            elif is_mcast and not is_emerg_mcast_active(current_active_spec[0], holdover_sec=0.12):
+                try: bg_proc.kill()
+                except Exception: pass
+                bg_proc = None
+                current_active_spec = None
+                last_bg_retry = 0.0
+
+        bg_is_connecting = (
+            bg_proc is not None
+            and bg_proc.poll() is None
+            and (time.time() - bg_spawn_time) < 4.5
+        )
+
+        if not chunk and not intro_proc and not bg_is_connecting:
+            if bg_proc:
+                try: bg_proc.kill()
+                except Exception: pass
+                bg_proc = None
+
+            if time.time() - last_bg_retry > 1.5:
+                spec, is_override = get_active_stream()
+                raw_url = spec[0] if isinstance(spec, tuple) else spec
+                if raw_url:
                     if is_override and intro_duck_pending and intro_clip and os.path.exists(intro_clip):
-                        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", url, "-i", intro_clip, "-filter_complex", "[0:a]volume=0.3[v];[v][1:a]amix=inputs=2:duration=longest:dropout_transition=2", "-f", "s16le", "-ar", "22050", "-ac", "1", "-"]
+                        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-i", raw_url, "-i", intro_clip, "-filter_complex", "[0:a]volume=0.3[v];[v][1:a]amix=inputs=2:duration=longest:dropout_transition=2", "-f", "s16le", "-ar", "22050", "-ac", "1", "-"]
                         bg_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
                         intro_duck_pending = False
                     else:
-                        bg_proc = spawn_audio_proc(url)
+                        bg_proc = spawn_audio_proc(spec)
+                    bg_spawn_time = time.time()
                 last_bg_retry = time.time()
-                
-            if tech_diff_path and os.path.exists(tech_diff_path):
+
+            if not bg_proc and tech_diff_path and os.path.exists(tech_diff_path):
                 if not tech_proc or tech_proc.poll() is not None:
                     tech_proc = subprocess.Popen(["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-stream_loop", "-1", "-i", tech_diff_path, "-f", "s16le", "-ar", "22050", "-ac", "1", "-"], stdout=subprocess.PIPE)
-                
                 if tech_proc and tech_proc.poll() is None:
-                    chunk = tech_proc.stdout.read(4096)
-                
+                    chunk = tech_proc.stdout.read(FRAME_BYTES)
+
         if chunk:
-            try: master_proc.stdin.write(chunk); master_proc.stdin.flush()
-            except: break
+            push_pcm_bytes(chunk)
         else:
-            try:
-                master_proc.stdin.write(bytes(4096))
-                master_proc.stdin.flush()
-                time.sleep(0.092)
-            except: break
+            time.sleep(0.01)
 
 def stream_and_play_alert_wav(wav_path):
     try: subprocess.run(["aplay", "-D", LOCAL_HW_OUTPUT, wav_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -924,8 +1315,22 @@ def alert_playback_worker():
         try:
             config = load_taendec_config()
             raw_header = payload.get("raw_header", "")
+            if not raw_header and payload.get("fipsCodes"):
+                w_org = payload.get("originator", "EAS").strip().upper()
+                w_evt = payload.get("eventCode", "RWT").strip().upper()
+                w_dur = payload.get("duration", "0030").strip()
+                raw_fips = payload.get("fipsCodes", "")
+                if isinstance(raw_fips, list):
+                    w_fips_list = [str(x).strip().zfill(6)[-6:] for x in raw_fips if str(x).strip()]
+                else:
+                    w_fips_list = [x.strip().zfill(6)[-6:] for x in re.split(r"[-,\s]+", str(raw_fips)) if x.strip()]
+                w_fips = "-".join(w_fips_list)
+                w_sender = (payload.get("senderId") or config.get("system", {}).get("sender_id", "TAENDEC")).ljust(8)[:8]
+                raw_header = f"ZCZC-{w_org}-{w_evt}-{w_fips}+{w_dur}-{get_utc_header_timestamp()}-{w_sender}-"
             
-            if payload.get("type") != "WEB" and not is_in_alerting_area(raw_header): continue
+            if not is_in_alerting_area(raw_header):
+                logger.info(f"Dropped alert ({payload.get('type', 'UNKNOWN')}) via geographic/compound filtering: {raw_header}")
+                continue
             if is_duplicate(raw_header): continue
                 
             pause_ms = max(0, min(int(config.get("audio_processing", {}).get("pre_alert_pause_ms", 1000)), 7000))
@@ -1452,6 +1857,11 @@ class APIHandler(BaseHTTPRequestHandler):
             payload["type"] = "WEB"
             with STATE_LOCK: SCHEDULED_ALERTS.append({"time": datetime.fromisoformat(payload.get("startTime", datetime.now().isoformat()).replace("Z", "+00:00")).timestamp(), "payload": payload})
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(json.dumps({"status": "Alert Scheduled Successfully"}).encode("utf-8"))
+        elif self.path == "/api/test_webhook":
+            test_hdr = "ZCZC-WXR-RWT-027145+0030-3202300-NARNPKM -"
+            ok, detail = send_single_http_webhook(payload, test_hdr, "TaENDEC Outbound Webhook Test", "")
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
+            self.wfile.write(json.dumps({"ok": ok, "detail": detail}).encode("utf-8"))
         elif self.path == "/api/upload":
             try:
                 safe_name = "".join(c for c in payload.get("filename", "upload.bin") if c.isalnum() or c in "._- ")

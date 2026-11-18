@@ -185,6 +185,8 @@ window.onerror = function(msg, url, line) {
         <label>Allowed FIPS Codes:</label> <input type="text" id="cfg_allowed_fips" placeholder="e.g. 027145">
         <label>Zone & Event Overrides (FIPS: EVT, EVT):</label> 
         <textarea id="cfg_adv_filters" rows="2" placeholder="027145: TOR, SVR&#10;018001: HWW"></textarea>
+        <label>Sender &amp; Compound Rules (BLOCK/ALLOW | 8-Char Sender | Events | FIPS):</label>
+        <textarea id="cfg_sender_filters" rows="3" style="font-family: monospace;" placeholder="BLOCK | GWESCAP  | RWT | &#10;BLOCK | WXK44    | RWT,RMT | 027145"></textarea>
         <br>
         <label class="check-label"><input type="checkbox" id="cfg_dedupe_enabled"> Enable Alert Deduplication</label>
         <label>Dedupe Grace Period (Mins 1-7):</label> <input type="number" id="cfg_dedupe_grace" min="1" max="7">
@@ -322,10 +324,21 @@ window.onerror = function(msg, url, line) {
 
       <!-- Icecast -->
       <div class="settings-panel">
-        <h4>Icecast Streaming Bridge</h4>
+        <h4>Icecast Streaming Bridge (Priority 4 BGM)</h4>
         <label class="check-label"><input type="checkbox" id="cfg_ice_enabled"> Enable Icecast Bridge Overlay</label>
-        <label>Server Mount URL:</label> <input type="text" id="cfg_ice_server" placeholder="icecast://source:pass@host:8000/stream">
-        <label>Background Media URL (Auto-extracts audio):</label> <input type="text" id="cfg_ice_bg" placeholder="http://stream.url/audio.mp3">
+        <label>Server Mount URL:</label>
+        <input type="text" id="cfg_ice_server" placeholder="icecast://source:pass@host:8000/stream">
+        <label>[Priority 4] Background Media / Multicast URL (HTTP, RTP, or UDP):</label>
+        <input type="text" id="cfg_ice_bg" placeholder="rtp://239.1.1.1:5004 or http://stream.url/audio.mp3">
+        <label>Background Stream Codec:</label>
+        <select id="cfg_ice_bg_codec">
+          <option value="auto">Auto-Detect (HTTP / Standard Stream)</option>
+          <option value="pcm_s16le_48k_stereo">PCM S16LE Stereo 48kHz (Open Paging Server)</option>
+          <option value="pcm_s16le_48k_mono">PCM S16LE Mono 48kHz (Open Paging Server)</option>
+          <option value="g722">G.722</option>
+          <option value="pcmu">PCMU (&mu;-Law)</option>
+          <option value="pcma">PCMA (A-Law)</option>
+        </select>
         <label>Tech Difficulties Audio (Plays if BG fails):</label>
         <div class="upload-group">
             <input type="text" id="cfg_ice_tech" placeholder="Path to .wav/.mp3">
@@ -334,11 +347,28 @@ window.onerror = function(msg, url, line) {
         </div>
       </div>
 
-            <!-- Icecast Stream Manager -->
+      <!-- Icecast Stream Manager -->
       <div class="settings-panel">
-        <h4>Icecast Stream Override</h4>
-        <p style="color:#888; font-size: 0.85em; margin: 0; margin-top: 5px;">Overrides normal programming. Reverts automatically if stream drops for 2 mins.</p>
-        <label>Override URL (YouTube supported):</label> <input type="text" id="cfg_stream_override" placeholder="https://youtube.com/watch?v=...">
+        <h4>Icecast Stream Overrides (Priority 2 &amp; Priority 3)</h4>
+        <p style="color:#888; font-size: 0.85em; margin: 0 0 10px 0;">
+          Priority: <b>1. EAS Alerts</b> &gt; <b>2. Emergency Multicast</b> &gt; <b>3. Stream Override</b> &gt; <b>4. Background Media</b>
+        </p>
+        <label class="check-label"><input type="checkbox" id="cfg_ice_emerg_en"> [Priority 2] Enable Emergency Multicast Preemption</label>
+        <label>Emergency Multicast URL:</label>
+        <input type="text" id="cfg_ice_emerg_url" placeholder="rtp://239.1.1.2:5004">
+        <label>Emergency Multicast Codec:</label>
+        <select id="cfg_ice_emerg_codec">
+          <option value="pcm_s16le_48k_stereo">PCM S16LE Stereo 48kHz (Open Paging Server)</option>
+          <option value="pcm_s16le_48k_mono">PCM S16LE Mono 48kHz (Open Paging Server)</option>
+          <option value="g722">G.722</option>
+          <option value="pcmu">PCMU (&mu;-Law)</option>
+          <option value="pcma">PCMA (A-Law)</option>
+          <option value="auto">Auto-Detect</option>
+        </select>
+        <hr style="border: 0; border-bottom: 1px dashed #333; margin: 12px 0;">
+        <label style="color:#ff6600;">[Priority 3] Manual HTTP / YouTube Override</label>
+        <label>Override URL (YouTube supported):</label>
+        <input type="text" id="cfg_stream_override" placeholder="https://youtube.com/watch?v=...">
         <label>Intro Audio Clip Path:</label> 
         <div class="upload-group">
             <input type="text" id="cfg_stream_clip" placeholder="Path to intro clip">
@@ -346,7 +376,7 @@ window.onerror = function(msg, url, line) {
             <button type="button" class="btn-orange btn-sm" onclick="uploadFile('f_stream_clip', 'cfg_stream_clip')">Up</button>
         </div>
         <label>Intro Behavior:</label> 
-        <select id="cfg_stream_mode"><option value="before">Play Before Override Starts</option><option value="duck">Duck Override & Play</option></select>
+        <select id="cfg_stream_mode"><option value="before">Play Before Override Starts</option><option value="duck">Duck Override &amp; Play</option></select>
         <br>
         <button type="button" onclick="triggerStreamOverride(true)" style="margin-top: 10px; background: #e74c3c; color: white; border: none; padding: 6px 12px; cursor: pointer; font-weight: bold;">Engage Override</button>
         <button type="button" onclick="triggerStreamOverride(false)" style="margin-top: 10px; background: #333; color: white; border: 1px solid #555; padding: 6px 12px; cursor: pointer;">Return to Normal</button>
@@ -585,19 +615,45 @@ window.onerror = function(msg, url, line) {
     tbody.appendChild(tr);
   }
 
-  function addHttpEndpoint(url = "", body = "") {
+  function addHttpEndpoint(url = "", body = "", headers = "") {
     const container = document.getElementById("httpEndpointsContainer");
     const div = document.createElement("div");
     div.style.border = "1px solid #444"; div.style.padding = "10px"; div.style.marginBottom = "10px"; div.style.background = "#111";
     div.className = "http-row";
     div.innerHTML = `
-      <div style="display:flex; gap:10px; margin-bottom:5px;">
-        <input type="text" class="ep-url" placeholder="Target HTTP POST URL" value="${url}" style="flex: 1;">
+      <div style="display:flex; gap:10px; margin-bottom:6px;">
+        <input type="text" class="ep-url" placeholder="Outbound Target URL (https://...)" style="flex: 1;">
+        <button type="button" class="btn-orange btn-sm" onclick="testSingleHttpEndpoint(this)">Test</button>
         <button type="button" class="btn-orange btn-sm btn-red" onclick="this.parentElement.parentElement.remove()">X</button>
       </div>
-      <textarea class="ep-body" rows="3" placeholder='{"text": "${TRANSTEXT}"}' style="width: 100%; font-family: monospace;">${body}</textarea>
+      <input type="text" class="ep-headers" placeholder='Optional Headers (e.g. Authorization: Bearer TOKEN or {"X-API-Key":"123"})' style="width: 100%; margin-bottom: 6px; font-family: monospace;">
+      <textarea class="ep-body" rows="3" placeholder='{"header": "\${HEADER}", "event": "\${EVENT}", "sender": "\${SENDERID}", "text": "\${TRANSTEXT}", "audio_url": "\${AUDIO_URL}"}' style="width: 100%; font-family: monospace;"></textarea>
     `;
+    div.querySelector(".ep-url").value = url || "";
+    div.querySelector(".ep-headers").value = typeof headers === "object" && headers !== null ? JSON.stringify(headers) : (headers || "");
+    div.querySelector(".ep-body").value = body || "";
     container.appendChild(div);
+  }
+
+  async function testSingleHttpEndpoint(btn) {
+    const row = btn.closest(".http-row");
+    const url = row.querySelector(".ep-url").value.trim();
+    const headers = row.querySelector(".ep-headers").value.trim();
+    const body = row.querySelector(".ep-body").value;
+    if (!url) { alert("Enter a target URL first."); return; }
+    btn.disabled = true; btn.textContent = "Sending...";
+    try {
+      const res = await apiFetch(`http://${window.location.hostname}:${API_PORT}/api/test_webhook`, {
+        method: "POST",
+        body: JSON.stringify({ url, headers, body })
+      });
+      const data = await res.json();
+      alert(data.ok ? `Webhook OK (${data.detail})` : `Webhook Failed: ${data.detail}`);
+    } catch (e) {
+      alert("Test request error: " + e);
+    } finally {
+      btn.disabled = false; btn.textContent = "Test";
+    }
   }
 
   function toggleGWES(el) {
@@ -694,6 +750,10 @@ window.onerror = function(msg, url, line) {
       document.getElementById("cfg_ice_enabled").checked = currentConfig.icecast?.enabled || false;
       document.getElementById("cfg_ice_server").value = currentConfig.icecast?.server_url || "";
       document.getElementById("cfg_ice_bg").value = currentConfig.icecast?.bg_music_url || "";
+          if(document.getElementById("cfg_ice_emerg_en")) document.getElementById("cfg_ice_emerg_en").checked = currentConfig.icecast.emerg_mcast_enabled || false;
+          if(document.getElementById("cfg_ice_emerg_url")) document.getElementById("cfg_ice_emerg_url").value = currentConfig.icecast.emerg_mcast_url || "";
+          if(document.getElementById("cfg_ice_emerg_codec")) document.getElementById("cfg_ice_emerg_codec").value = currentConfig.icecast.emerg_mcast_codec || "pcm_s16le_48k_stereo";
+          if(document.getElementById("cfg_ice_bg_codec")) document.getElementById("cfg_ice_bg_codec").value = currentConfig.icecast.bg_music_codec || "auto";
       document.getElementById("cfg_ice_tech").value = currentConfig.icecast?.tech_diff_file || "";
 
       document.getElementById("cfg_mpv_mode").value = currentConfig.details_channel?.mode || "static_screen";
@@ -711,7 +771,7 @@ window.onerror = function(msg, url, line) {
       document.getElementById("cfg_inbound_webhooks").value = (outputs.inbound_webhooks || []).join(", ");
       
       document.getElementById("httpEndpointsContainer").innerHTML = "";
-      (outputs.http_endpoints || []).forEach(ep => addHttpEndpoint(ep.url, ep.body));
+      (outputs.http_endpoints || []).forEach(ep => addHttpEndpoint(ep.url, ep.body, ep.headers || ""));
 
       document.getElementById("cfg_enable_discord").checked = outputs.enable_discord_webhook ?? false;
       document.getElementById("cfg_discord_urls").value = (outputs.discord_webhook_urls || []).join(", ");
@@ -886,7 +946,8 @@ window.onerror = function(msg, url, line) {
         enforce_fips_filtering: document.getElementById("cfg_enforce_fips").checked,
         allowed_state_prefixes: document.getElementById("cfg_allowed_states").value.split(",").map(x => x.trim()).filter(Boolean),
         allowed_fips_codes: document.getElementById("cfg_allowed_fips").value.split(/[\s,;-]+/).map(x => x.trim()).filter(Boolean),
-        advanced_filters: document.getElementById("cfg_adv_filters").value.trim()
+        advanced_filters: document.getElementById("cfg_adv_filters").value,
+          sender_filters: document.getElementById("cfg_sender_filters") ? document.getElementById("cfg_sender_filters").value : "".trim()
     };
 
     currentConfig.deduplication = {
@@ -920,7 +981,11 @@ window.onerror = function(msg, url, line) {
     currentConfig.icecast = {
         enabled: document.getElementById("cfg_ice_enabled").checked,
         server_url: document.getElementById("cfg_ice_server").value.trim(),
+        emerg_mcast_enabled: document.getElementById("cfg_ice_emerg_en").checked,
+        emerg_mcast_url: document.getElementById("cfg_ice_emerg_url").value.trim(),
+        emerg_mcast_codec: document.getElementById("cfg_ice_emerg_codec").value,
         bg_music_url: document.getElementById("cfg_ice_bg").value.trim(),
+        bg_music_codec: document.getElementById("cfg_ice_bg_codec").value,
         tech_diff_file: document.getElementById("cfg_ice_tech").value.trim()
     };
 
